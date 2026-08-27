@@ -9,6 +9,8 @@
     "auth:migrate": "bun src/scripts/migrate.ts"
   },
   "dependencies": {
+    "@ai-sdk/anthropic": "^4.0.44",
+    "@ai-sdk/google": "^4.0.54",
     "@ai-sdk/openai": "^4.0.47",
     "@fastify/swagger": "^9.8.1",
     "@fastify/swagger-ui": "^6.1.1",

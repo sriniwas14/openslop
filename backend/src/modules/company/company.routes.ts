@@ -22,7 +22,6 @@ export async function companyRoutes(app: FastifyInstance) {
       preHandler: requireSession,
       schema: {
         body: createCompanySchema,
-        response: { 201: companyResponseSchema },
       },
     },
     async (request, reply) => {
@@ -30,7 +29,62 @@ export async function companyRoutes(app: FastifyInstance) {
         .insert(companies)
         .values({ ...request.body, userId: request.session!.user.id })
         .returning();
-      return reply.status(201).send(row);
+
+      // ponytail: POST is SSE — hijack to stream workflow progress
+      reply.hijack();
+      reply.raw.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      });
+
+      const write = (event: string, data: unknown) => {
+        reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+      };
+
+      let closed = false;
+      request.raw.on("close", () => {
+        closed = true;
+      });
+
+      write("start", { companyId: row.id, name: row.name, website: row.website });
+
+      try {
+        const { companyPersonaWorkflow } = await import("./company.workflow");
+        const run = await companyPersonaWorkflow.createRun();
+        const stream = run.stream({
+          inputData: { companyId: row.id, website: row.website!, name: row.name, userId: request.session!.user.id },
+        });
+
+        for await (const evt of (stream as any).fullStream ?? stream) {
+          if (closed) break;
+          write("progress", evt);
+        }
+
+        try {
+          await (stream as any).result;
+        } catch {
+          // ponytail: workflow failed — error event handled below, "just try again"
+        }
+
+        if (closed) return;
+
+        const [fresh] = await db
+          .select()
+          .from(companies)
+          .where(and(eq(companies.id, row.id), eq(companies.userId, request.session!.user.id)));
+        if (fresh?.persona) {
+          write("done", fresh);
+        } else {
+          const [cur] = await db.select().from(companies).where(eq(companies.id, row.id));
+          if (cur?.persona) write("done", cur);
+          else write("error", { message: "persona generation failed" });
+        }
+      } catch (e: any) {
+        if (!closed) write("error", { message: e?.message ?? String(e) });
+      } finally {
+        if (!reply.raw.writableEnded) reply.raw.end();
+      }
     },
   );
 

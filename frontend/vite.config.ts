@@ -9,6 +9,9 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': 'http://localhost:3000',
+      '/companies': 'http://localhost:3000',
+      '/ai': 'http://localhost:3000',
+      '/health': 'http://localhost:3000',
     },
   },
   resolve: {

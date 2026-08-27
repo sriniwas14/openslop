@@ -2,7 +2,6 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createOllama } from "ollama-ai-provider-v2";
 import { Mastra } from "@mastra/core";
 import { Agent } from "@mastra/core/agent";
-import { env } from "../env";
 
 export const AI_PROVIDERS = [
   "openai",
@@ -34,15 +33,14 @@ export function resolveModel(provider: AiProvider, model: string) {
     return `${provider}/${model}`;
   }
   if (provider === "ollama") {
-    const ollama = createOllama(
-      env.OLLAMA_BASE_URL ? { baseURL: env.OLLAMA_BASE_URL } : undefined,
-    );
+    const base = process.env.OLLAMA_BASE_URL;
+    const ollama = createOllama(base ? { baseURL: base } : undefined);
     return ollama(model);
   }
   // ponytail: custom = any OpenAI-compatible endpoint (vLLM, LiteLLM, gateways)
   return createOpenAI({
-    apiKey: env.CUSTOM_LLM_API_KEY ?? "not-set",
-    baseURL: env.CUSTOM_LLM_BASE_URL,
+    apiKey: process.env.CUSTOM_LLM_API_KEY ?? "not-set",
+    baseURL: process.env.CUSTOM_LLM_BASE_URL,
   })(model);
 }
 
