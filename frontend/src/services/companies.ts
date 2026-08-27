@@ -93,3 +93,16 @@ export function createCompanySSE(
     return company
   })
 }
+
+export function updateCompany(id: string, body: Partial<{ name: string; website: string; persona: string | null }>): Promise<Company> {
+  return fetch(`/companies/${id}`, {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(handle<Company>)
+}
+
+export function deleteCompany(id: string): Promise<{ success: boolean }> {
+  return fetch(`/companies/${id}`, { method: 'DELETE', credentials: 'include' }).then(handle<{ success: boolean }>)
+}

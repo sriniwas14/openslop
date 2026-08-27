@@ -1,0 +1,94 @@
+import { z } from "zod";
+
+export const contentKinds = ["video", "carousel", "talkinghead", "greenscreen"] as const;
+export const videoKinds = ["video", "talkinghead", "greenscreen"] as const;
+
+export const carouselImageSchema = z.object({
+  url: z.url().max(2048),
+  text: z.string().min(1).max(2000),
+  font: z.string().max(100).optional(),
+  background: z.string().max(100).optional(),
+  color: z.string().max(100).optional(),
+});
+
+export const scriptSchema = z.object({
+  type: z.enum(["aroll", "broll"]),
+  prompt: z.string().min(1).max(5000),
+});
+
+const baseContentFields = {
+  companyId: z.string().min(1),
+  kind: z.enum(contentKinds),
+  title: z.string().min(1).max(255),
+  status: z.enum(["draft", "published"]).default("draft").optional(),
+  images: z.array(carouselImageSchema).max(20).optional(),
+  scripts: z.array(scriptSchema).max(50).optional(),
+  format: z.enum(["vertical", "horizontal"]).optional(),
+};
+
+export const createContentSchema = z.object(baseContentFields).superRefine((v, ctx) => {
+  if (v.kind === "carousel") {
+    if (!v.images || v.images.length === 0) {
+      ctx.addIssue({ code: "custom", path: ["images"], message: "images required for carousel" });
+    }
+    if (v.scripts) ctx.addIssue({ code: "custom", path: ["scripts"], message: "scripts not allowed for carousel" });
+    if (v.format) ctx.addIssue({ code: "custom", path: ["format"], message: "format not allowed for carousel" });
+  }
+  if ((videoKinds as readonly string[]).includes(v.kind)) {
+    if (!v.scripts || v.scripts.length === 0) {
+      ctx.addIssue({ code: "custom", path: ["scripts"], message: "scripts required for video/talkinghead/greenscreen" });
+    }
+    if (!v.format) {
+      ctx.addIssue({ code: "custom", path: ["format"], message: "format required for video/talkinghead/greenscreen" });
+    }
+    if (v.images) ctx.addIssue({ code: "custom", path: ["images"], message: "images not allowed for video types" });
+  }
+});
+
+// ponytail: update is partial without cross-field refine — merged validation happens where kind is known
+export const updateContentSchema = z
+  .object(baseContentFields)
+  .partial()
+  .refine((v) => Object.keys(v).length > 0, { message: "empty patch" });
+
+export const contentIdParamsSchema = z.object({ id: z.string().min(1) });
+
+export const contentResponseSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  companyId: z.string(),
+  kind: z.enum(contentKinds),
+  title: z.string(),
+  status: z.string(),
+  images: z.array(carouselImageSchema).nullable(),
+  scripts: z.array(scriptSchema).nullable(),
+  format: z.enum(["vertical", "horizontal"]).nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+
+export const errorResponseSchema = z.object({ error: z.string() });
+
+// ponytail: helpers — sqlite stores JSON as text; parse on read, stringify on write
+export function parseContentRow(row: {
+  images: string | null;
+  scripts: string | null;
+  format: string | null;
+  [k: string]: unknown;
+}) {
+  return {
+    ...row,
+    images: row.images ? (JSON.parse(row.images) as z.infer<typeof carouselImageSchema>[]) : null,
+    scripts: row.scripts ? (JSON.parse(row.scripts) as z.infer<typeof scriptSchema>[]) : null,
+    format: row.format as "vertical" | "horizontal" | null,
+  };
+}
+
+export function serializeContentInput(input: z.infer<typeof createContentSchema>) {
+  return {
+    ...input,
+    status: input.status ?? "draft",
+    images: input.images ? JSON.stringify(input.images) : null,
+    scripts: input.scripts ? JSON.stringify(input.scripts) : null,
+  };
+}
