@@ -9,7 +9,7 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { createOllama } from "ollama-ai-provider-v2";
 
 // ponytail: strict DB-only — no env fallback; provider-aware routing so openrouter key hits openrouter, not api.openai.com
-async function resolvePersonaModel(userId: string) {
+export async function resolveUserModel(userId: string) {
   const [def] = await db
     .select()
     .from(aiConfigs)
@@ -98,7 +98,7 @@ const generateStep = createStep({
     companyId: z.string(),
   }),
   execute: async ({ inputData }) => {
-    const model = await resolvePersonaModel(inputData.userId);
+    const model = await resolveUserModel(inputData.userId);
     const agent = new (await import("@mastra/core/agent")).Agent({
       id: "persona-agent",
       name: "persona-agent",

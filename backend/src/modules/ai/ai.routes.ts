@@ -3,14 +3,17 @@ import { z } from "zod";
 import { and, desc, eq } from "drizzle-orm";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { db } from "../../lib/db";
-import { aiConfigs } from "../../db/schema";
+import { aiConfigs, companies } from "../../db/schema";
 import { requireSession } from "../../plugins/auth";
 import { AI_PROVIDERS } from "../../lib/mastra";
+import { resolveUserModel } from "../company/company.workflow";
 import {
   aiConfigIdParamsSchema,
   aiConfigResponseSchema,
   createAiConfigSchema,
   errorResponseSchema,
+  generateContentBodySchema,
+  generatedContentSchema,
   modelQuerySchema,
   updateAiConfigSchema,
 } from "./ai.schemas";
@@ -66,6 +69,27 @@ const CURATED: Record<string, string[]> = {
 
 // ponytail: 5m in-mem cache for model lists
 const modelCache = new Map<string, { at: number; data: { id: string; name: string }[] }>();
+
+const KIND_LABELS: Record<string, string> = {
+  carousel: "Carousel (multi-slide social post)",
+  "talking-head": "Talking Head Video (presenter-style video)",
+  "short-video": "Short Video (short-form video)",
+  image: "Image Post (visual social post)",
+  text: "Text Post (text-based content)",
+  article: "Article (long-form content)",
+};
+
+const VALID_PLATFORMS = ["instagram", "linkedin", "x", "tiktok", "youtube", "blog"];
+
+// ponytail: models sometimes wrap JSON in markdown fences — extract the first { ... } block
+function extractJson(text: string): any {
+  const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const raw = (fenced ? fenced[1] : text).trim();
+  const start = raw.indexOf("{");
+  const end = raw.lastIndexOf("}");
+  if (start === -1 || end <= start) throw new Error("no JSON object in model response");
+  return JSON.parse(raw.slice(start, end + 1));
+}
 
 async function fetchOpenAiModels(baseUrl: string, apiKey: string): Promise<{ id: string; name: string }[]> {
   const url = `${baseUrl.replace(/\/$/, "")}/models`;
@@ -309,6 +333,77 @@ export async function aiRoutes(app: FastifyInstance) {
           return list.slice(0, 50);
         }
         return [];
+      }
+    },
+  );
+
+  // ponytail: persona-driven content generation — user only picks a content type; the brand persona drives everything
+  r.post(
+    "/ai/generate-content",
+    {
+      preHandler: requireSession,
+      schema: { body: generateContentBodySchema, response: { 200: generatedContentSchema, 400: errorResponseSchema, 404: errorResponseSchema, 502: errorResponseSchema } },
+    },
+    async (request, reply) => {
+      const { type, companyId } = request.body;
+      const userId = request.session!.user.id;
+
+      const [company] = await db
+        .select()
+        .from(companies)
+        .where(and(eq(companies.id, companyId), eq(companies.userId, userId)));
+      if (!company) return reply.status(404).send({ error: "Company not found" } as any);
+      if (!company.persona)
+        return reply.status(400).send({ error: "This brand has no persona yet — complete onboarding to generate it first." } as any);
+
+      let model;
+      try {
+        model = await resolveUserModel(userId);
+      } catch (e: any) {
+        return reply.status(400).send({ error: e?.message || "No AI provider configured" } as any);
+      }
+
+      const agent = new (await import("@mastra/core/agent")).Agent({
+        id: "content-planner-agent",
+        name: "content-planner-agent",
+        instructions:
+          "You are GeoAlt's content strategist. You plan brand content strictly from the brand's persona — audience, voice, values, pain points and positioning. Always respond with a single valid JSON object and nothing else — no markdown, no commentary.",
+        model: model as any,
+      });
+
+      let res;
+      try {
+        res = await agent.generate(
+          `Brand: ${company.name}\n` +
+            `Brand persona:\n"""${company.persona.slice(0, 6000)}"""\n\n` +
+            `Content type to plan: ${KIND_LABELS[type]}\n\n` +
+            `Plan ONE fresh piece of content of this type that fits this brand's audience, voice and positioning. Respond with ONLY this JSON shape:\n` +
+            `{"title": string, "summary": string, "platforms": string[], "aiScore": number}\n` +
+            `- title: catchy working title in the brand's voice, at most 90 characters\n` +
+            `- summary: 1-2 sentence description of what the content will be, at most 220 characters\n` +
+            `- platforms: 1-3 values from ${JSON.stringify(VALID_PLATFORMS)} that best fit this brand and content type\n` +
+            `- aiScore: integer 0-100 estimating AI visibility / relevance potential for this topic`,
+        );
+      } catch (e: any) {
+        request.log.warn({ err: e }, "content generation failed");
+        return reply.status(502).send({ error: e?.message || "content generation failed" } as any);
+      }
+
+      try {
+        const parsed = extractJson(res.text);
+        const platforms = Array.isArray(parsed.platforms)
+          ? (parsed.platforms as unknown[]).filter((p): p is string => typeof p === "string" && VALID_PLATFORMS.includes(p))
+          : [];
+        const aiScore = Math.max(0, Math.min(100, Math.round(Number(parsed.aiScore ?? 60) || 60)));
+        return {
+          title: String(parsed.title || "Untitled content").slice(0, 120),
+          summary: String(parsed.summary || "Planned from your brand persona.").slice(0, 300),
+          platforms: [...new Set(platforms)].slice(0, 3),
+          aiScore,
+        };
+      } catch (e: any) {
+        request.log.warn({ err: e }, "could not parse generated content JSON");
+        return reply.status(502).send({ error: "AI returned an unusable response — try again" } as any);
       }
     },
   );

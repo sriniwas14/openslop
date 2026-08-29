@@ -62,3 +62,28 @@ export function listModels(params: { provider: AiProvider; configId?: string; ap
   if (params.q) sp.set('q', params.q)
   return fetch(`/ai/models?${sp.toString()}`, { credentials: 'include' }).then(handle<ModelOption[]>)
 }
+
+export type GeneratedContent = {
+  title: string
+  summary: string
+  platforms: string[]
+  aiScore: number
+}
+
+export async function generateContent(body: { type: string; companyId: string }): Promise<GeneratedContent> {
+  const res = await fetch('/ai/generate-content', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    let message = res.statusText
+    try {
+      const parsed = JSON.parse(await res.text())
+      if (parsed?.error) message = parsed.error
+    } catch {}
+    throw new Error(message)
+  }
+  return res.json() as Promise<GeneratedContent>
+}

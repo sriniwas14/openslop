@@ -37,4 +37,18 @@ export const modelQuerySchema = z.object({
   q: z.string().max(255).optional(),
 });
 
+export const CONTENT_KINDS = ["carousel", "talking-head", "short-video", "image", "text", "article"] as const;
+
+export const generateContentBodySchema = z.object({
+  type: z.enum(CONTENT_KINDS),
+  companyId: z.string().min(1),
+});
+
+export const generatedContentSchema = z.object({
+  title: z.string(),
+  summary: z.string(),
+  platforms: z.array(z.string()),
+  aiScore: z.number().int().min(0).max(100),
+});
+
 export const errorResponseSchema = z.object({ error: z.string() });
