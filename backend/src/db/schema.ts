@@ -53,12 +53,13 @@ export const contents = sqliteTable(
       .$defaultFn(() => crypto.randomUUID()),
     userId: text("user_id").notNull(),
     companyId: text("company_id").notNull(),
-    kind: text("kind").notNull(), // video | carousel | talkinghead | greenscreen
+    kind: text("kind").notNull(), // carousel | talkinghead | greenscreen
     title: text("title").notNull(),
     status: text("status").notNull().default("draft"), // draft | published
     images: text("images"), // JSON: { url, text, font?, background?, color? }[]
     scripts: text("scripts"), // JSON: { type: "aroll"|"broll", prompt }[]
     format: text("format"), // vertical | horizontal | null
+    scheduledAt: text("scheduled_at"), // ISO datetime, nullable (optional — drafts may omit)
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),
@@ -70,6 +71,7 @@ export const contents = sqliteTable(
     index("idx_content_user").on(t.userId),
     index("idx_content_company").on(t.companyId),
     index("idx_content_kind").on(t.kind),
+    index("idx_content_scheduled_at").on(t.scheduledAt),
   ],
 );
 

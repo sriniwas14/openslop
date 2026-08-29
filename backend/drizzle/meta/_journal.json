@@ -29,6 +29,13 @@
       "when": 1787829368269,
       "tag": "0003_grey_vivisector",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1787996221625,
+      "tag": "0004_stale_gideon",
+      "breakpoints": true
     }
   ]
 }

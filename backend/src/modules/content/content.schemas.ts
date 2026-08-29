@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-export const contentKinds = ["video", "carousel", "talkinghead", "greenscreen"] as const;
-export const videoKinds = ["video", "talkinghead", "greenscreen"] as const;
+export const contentKinds = ["carousel", "talkinghead", "greenscreen"] as const;
+export const videoKinds = ["talkinghead", "greenscreen"] as const;
 
 export const carouselImageSchema = z.object({
   url: z.url().max(2048),
@@ -24,6 +24,7 @@ const baseContentFields = {
   images: z.array(carouselImageSchema).max(20).optional(),
   scripts: z.array(scriptSchema).max(50).optional(),
   format: z.enum(["vertical", "horizontal"]).optional(),
+  scheduledAt: z.string().datetime({ offset: true }).nullable().optional(),
 };
 
 export const createContentSchema = z.object(baseContentFields).superRefine((v, ctx) => {
@@ -36,10 +37,10 @@ export const createContentSchema = z.object(baseContentFields).superRefine((v, c
   }
   if ((videoKinds as readonly string[]).includes(v.kind)) {
     if (!v.scripts || v.scripts.length === 0) {
-      ctx.addIssue({ code: "custom", path: ["scripts"], message: "scripts required for video/talkinghead/greenscreen" });
+      ctx.addIssue({ code: "custom", path: ["scripts"], message: "scripts required for talkinghead/greenscreen" });
     }
     if (!v.format) {
-      ctx.addIssue({ code: "custom", path: ["format"], message: "format required for video/talkinghead/greenscreen" });
+      ctx.addIssue({ code: "custom", path: ["format"], message: "format required for talkinghead/greenscreen" });
     }
     if (v.images) ctx.addIssue({ code: "custom", path: ["images"], message: "images not allowed for video types" });
   }
@@ -63,17 +64,52 @@ export const contentResponseSchema = z.object({
   images: z.array(carouselImageSchema).nullable(),
   scripts: z.array(scriptSchema).nullable(),
   format: z.enum(["vertical", "horizontal"]).nullable(),
+  scheduledAt: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
 
 export const errorResponseSchema = z.object({ error: z.string() });
 
+export const companyIdParamsSchema = z.object({ companyId: z.string().min(1) });
+
+export const contentListQuerySchema = z.object({
+  kind: z.enum(contentKinds).optional(),
+  status: z.enum(["draft", "published"]).optional(),
+});
+
+// ideas — transient, no DB table (ponytail: persist when history/analytics needed)
+export const ideaSchema = z.object({
+  id: z.string(),
+  title: z.string().min(1).max(120),
+  painPoint: z.string().min(1).max(500),
+  hooks: z.array(z.string().min(1).max(280)).min(2).max(5),
+  angle: z.string().max(500).optional(),
+});
+
+export const ideasBodySchema = z.object({
+  kind: z.enum(contentKinds).optional(),
+  count: z.number().int().min(1).max(10).optional(),
+});
+
+export const ideasResponseSchema = z.object({
+  ideas: z.array(ideaSchema),
+});
+
+export const generateFromIdeaSchema = z.object({
+  ideaId: z.string().optional(),
+  idea: ideaSchema.optional(),
+  selectedHook: z.string().min(1).max(280),
+  kind: z.enum(contentKinds).optional(),
+  title: z.string().min(1).max(255).optional(),
+}).refine((v) => !!v.idea || !!v.ideaId, { message: "idea or ideaId required" });
+
 // ponytail: helpers — sqlite stores JSON as text; parse on read, stringify on write
 export function parseContentRow(row: {
   images: string | null;
   scripts: string | null;
   format: string | null;
+  scheduledAt: string | null;
   [k: string]: unknown;
 }) {
   return {
@@ -81,6 +117,7 @@ export function parseContentRow(row: {
     images: row.images ? (JSON.parse(row.images) as z.infer<typeof carouselImageSchema>[]) : null,
     scripts: row.scripts ? (JSON.parse(row.scripts) as z.infer<typeof scriptSchema>[]) : null,
     format: row.format as "vertical" | "horizontal" | null,
+    scheduledAt: (row.scheduledAt as string | null) ?? null,
   };
 }
 
@@ -88,6 +125,7 @@ export function serializeContentInput(input: z.infer<typeof createContentSchema>
   return {
     ...input,
     status: input.status ?? "draft",
+    scheduledAt: input.scheduledAt ? new Date(input.scheduledAt).toISOString() : null,
     images: input.images ? JSON.stringify(input.images) : null,
     scripts: input.scripts ? JSON.stringify(input.scripts) : null,
   };
