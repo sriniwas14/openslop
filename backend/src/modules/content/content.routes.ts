@@ -259,14 +259,15 @@ export async function contentRoutes(app: FastifyInstance) {
       if (!company) return reply.status(404).send({ error: "Company not found" } as any);
       if (!company.persona) return reply.status(400).send({ error: "This brand has no persona yet — complete onboarding first." } as any);
 
+      const { kind, count } = request.body as z.infer<typeof ideasBodySchema>;
+      // ponytail: task routing — carousel=image, video kinds=video
+      const task = kind === "carousel" ? "image" as const : kind ? "video" as const : "text" as const;
       let model;
       try {
-        model = await resolveUserModel(request.session!.user.id);
+        model = await resolveUserModel(request.session!.user.id, task);
       } catch (e: any) {
         return reply.status(400).send({ error: e?.message || "No AI provider configured" } as any);
       }
-
-      const { kind, count } = request.body as z.infer<typeof ideasBodySchema>;
       const n = Math.max(3, Math.min(10, count ?? 5));
       const kindHint = kind ? `Content kind: ${kind} (carousel = multi-slide/social, talkinghead = presenter video, greenscreen = green-screen overlay video). Tailor ideas to this format.` : "Mix across carousel, talkinghead, greenscreen.";
 
@@ -345,9 +346,10 @@ export async function contentRoutes(app: FastifyInstance) {
       const title = (body.title ?? idea.title).slice(0, 255);
       const selectedHook = body.selectedHook;
 
+      const task = finalKind === "carousel" ? "image" as const : "video" as const;
       let model;
       try {
-        model = await resolveUserModel(request.session!.user.id);
+        model = await resolveUserModel(request.session!.user.id, task);
       } catch (e: any) {
         return reply.status(400).send({ error: e?.message || "No AI provider configured" } as any);
       }

@@ -52,6 +52,43 @@ export function setDefaultAiConfig(id: string): Promise<AiConfig> {
   return fetch(`/ai/configs/${id}/default`, { method: 'POST', credentials: 'include' }).then(handle<AiConfig>)
 }
 
+export type AiPreferences = {
+  videoConfigId: string | null
+  videoModel: string | null
+  imageConfigId: string | null
+  imageModel: string | null
+  textConfigId: string | null
+  textModel: string | null
+}
+
+export function getAiPreferences(): Promise<AiPreferences> {
+  return fetch('/ai/preferences', { credentials: 'include' }).then(handle<AiPreferences>)
+}
+
+export function updateAiPreferences(body: Partial<AiPreferences>): Promise<AiPreferences> {
+  return fetch('/ai/preferences', {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(handle<AiPreferences>)
+}
+
+export type OnboardingProgress = { step: string; data: string | null; updatedAt: string }
+
+export function getOnboardingProgress(): Promise<OnboardingProgress> {
+  return fetch('/onboarding/progress', { credentials: 'include' }).then(handle<OnboardingProgress>)
+}
+
+export function saveOnboardingProgress(body: { step: string | number; data?: Record<string, unknown> | null }): Promise<OnboardingProgress> {
+  return fetch('/onboarding/progress', {
+    method: 'PUT',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(handle<OnboardingProgress>)
+}
+
 export type ModelOption = { id: string; name: string }
 
 export function listModels(params: { provider: AiProvider; configId?: string; apiKey?: string; baseUrl?: string; q?: string }): Promise<ModelOption[]> {

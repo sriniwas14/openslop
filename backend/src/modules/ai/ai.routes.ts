@@ -3,7 +3,7 @@ import { z } from "zod";
 import { and, desc, eq } from "drizzle-orm";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { db } from "../../lib/db";
-import { aiConfigs, companies } from "../../db/schema";
+import { aiConfigs, aiPreferences, companies } from "../../db/schema";
 import { requireSession } from "../../plugins/auth";
 import { AI_PROVIDERS } from "../../lib/mastra";
 import { resolveUserModel } from "../company/company.workflow";
@@ -15,7 +15,11 @@ import {
   generateContentBodySchema,
   generatedContentSchema,
   modelQuerySchema,
+  onboardingProgressResponseSchema,
+  onboardingProgressSchema,
+  preferencesSchema,
   updateAiConfigSchema,
+  updatePreferencesSchema,
 } from "./ai.schemas";
 
 function maskKey(k: string | null | undefined) {
@@ -202,6 +206,20 @@ export async function aiRoutes(app: FastifyInstance) {
         .where(and(eq(aiConfigs.id, request.params.id), eq(aiConfigs.userId, request.session!.user.id)))
         .returning({ id: aiConfigs.id });
       if (!rows.length) return reply.status(404).send({ error: "Not found" } as any);
+      // ponytail: clear prefs referencing deleted config — fallback to default
+      try {
+        const [pref] = await db.select().from(aiPreferences).where(eq(aiPreferences.userId, request.session!.user.id));
+        if (pref) {
+          const patch: any = {};
+          if (pref.videoConfigId === request.params.id) patch.videoConfigId = null;
+          if (pref.imageConfigId === request.params.id) patch.imageConfigId = null;
+          if (pref.textConfigId === request.params.id) patch.textConfigId = null;
+          if (Object.keys(patch).length) {
+            patch.updatedAt = new Date().toISOString();
+            await db.update(aiPreferences).set(patch).where(eq(aiPreferences.userId, request.session!.user.id));
+          }
+        }
+      } catch {}
       return { success: true };
     },
   );
@@ -337,6 +355,172 @@ export async function aiRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- preferences (provider+model independent) ----------
+  r.get(
+    "/ai/preferences",
+    { preHandler: requireSession, schema: { response: { 200: preferencesSchema } } },
+    async (request) => {
+      try {
+        const [pref] = await db.select().from(aiPreferences).where(eq(aiPreferences.userId, request.session!.user.id));
+        return {
+          videoConfigId: (pref as any)?.videoConfigId ?? pref?.videoConfigId ?? null,
+          videoModel: (pref as any)?.videoModel ?? null,
+          imageConfigId: (pref as any)?.imageConfigId ?? pref?.imageConfigId ?? null,
+          imageModel: (pref as any)?.imageModel ?? null,
+          textConfigId: (pref as any)?.textConfigId ?? pref?.textConfigId ?? null,
+          textModel: (pref as any)?.textModel ?? null,
+        } as any;
+      } catch { return { videoConfigId: null, videoModel: null, imageConfigId: null, imageModel: null, textConfigId: null, textModel: null } as any; }
+    },
+  );
+
+  r.put(
+    "/ai/preferences",
+    { preHandler: requireSession, schema: { body: updatePreferencesSchema, response: { 200: preferencesSchema, 400: errorResponseSchema, 500: errorResponseSchema } } },
+    async (request, reply) => {
+      const body = request.body as any;
+      const patch: any = { updatedAt: new Date().toISOString() };
+      const pairs: [string, string][] = [
+        ["videoConfigId", "videoModel"],
+        ["imageConfigId", "imageModel"],
+        ["textConfigId", "textModel"],
+      ];
+      for (const [idKey, modelKey] of pairs) {
+        if (body[idKey] !== undefined) {
+          if (body[idKey] === null) {
+            patch[idKey] = null;
+            // if provider cleared, also clear model unless explicitly set
+            if (body[modelKey] === undefined) patch[modelKey] = null;
+          } else {
+            const [cfg] = await db.select().from(aiConfigs).where(and(eq(aiConfigs.id, body[idKey]), eq(aiConfigs.userId, request.session!.user.id)));
+            if (!cfg) return reply.status(400).send({ error: `${idKey} not found` } as any);
+            patch[idKey] = body[idKey];
+          }
+        }
+        if (body[modelKey] !== undefined) {
+          const v = body[modelKey];
+          if (v === null || v === "") patch[modelKey] = null;
+          else patch[modelKey] = String(v).slice(0, 255);
+        }
+        // validate pair completeness: if one set without the other, error when model empty but id set
+        if (patch[idKey] !== undefined || patch[modelKey] !== undefined) {
+          // let partial saves through — required check is done at generation time; onboarding will validate all three
+        }
+      }
+      try {
+        const [existing] = await db.select().from(aiPreferences).where(eq(aiPreferences.userId, request.session!.user.id));
+        if (!existing) {
+          const [row] = await db
+            .insert(aiPreferences)
+            .values({
+              userId: request.session!.user.id,
+              videoConfigId: patch.videoConfigId ?? null,
+              videoModel: patch.videoModel ?? null,
+              imageConfigId: patch.imageConfigId ?? null,
+              imageModel: patch.imageModel ?? null,
+              textConfigId: patch.textConfigId ?? null,
+              textModel: patch.textModel ?? null,
+            } as any)
+            .returning();
+          return {
+            videoConfigId: (row as any).videoConfigId ?? null,
+            videoModel: (row as any).videoModel ?? null,
+            imageConfigId: (row as any).imageConfigId ?? null,
+            imageModel: (row as any).imageModel ?? null,
+            textConfigId: (row as any).textConfigId ?? null,
+            textModel: (row as any).textModel ?? null,
+          } as any;
+        } else {
+          const [row] = await db.update(aiPreferences).set(patch as any).where(eq(aiPreferences.userId, request.session!.user.id)).returning();
+          return {
+            videoConfigId: (row as any).videoConfigId ?? null,
+            videoModel: (row as any).videoModel ?? null,
+            imageConfigId: (row as any).imageConfigId ?? null,
+            imageModel: (row as any).imageModel ?? null,
+            textConfigId: (row as any).textConfigId ?? null,
+            textModel: (row as any).textModel ?? null,
+          } as any;
+        }
+      } catch (e: any) {
+        try {
+          await db.run(
+            // @ts-ignore
+            `CREATE TABLE IF NOT EXISTS ai_preferences (user_id TEXT PRIMARY KEY, video_config_id TEXT, video_model TEXT, image_config_id TEXT, image_model TEXT, text_config_id TEXT, text_model TEXT, updated_at TEXT NOT NULL)`,
+          );
+          const [row] = await db
+            .insert(aiPreferences)
+            .values({
+              userId: request.session!.user.id,
+              videoConfigId: patch.videoConfigId ?? null,
+              videoModel: patch.videoModel ?? null,
+              imageConfigId: patch.imageConfigId ?? null,
+              imageModel: patch.imageModel ?? null,
+              textConfigId: patch.textConfigId ?? null,
+              textModel: patch.textModel ?? null,
+            } as any)
+            .returning();
+          return {
+            videoConfigId: (row as any).videoConfigId ?? null,
+            videoModel: (row as any).videoModel ?? null,
+            imageConfigId: (row as any).imageConfigId ?? null,
+            imageModel: (row as any).imageModel ?? null,
+            textConfigId: (row as any).textConfigId ?? null,
+            textModel: (row as any).textModel ?? null,
+          } as any;
+        } catch {
+          return reply.status(500).send({ error: "failed to save preferences" } as any);
+        }
+      }
+    },
+  );
+
+  // ---------- onboarding progress (resume) ----------
+  r.get(
+    "/ai/onboarding/progress",
+    { preHandler: requireSession, schema: { response: { 200: onboardingProgressResponseSchema, 500: errorResponseSchema } } },
+    async (request, reply) => {
+      try {
+        const { onboardingProgress } = await import("../../db/schema");
+        const [row] = await db.select().from(onboardingProgress).where(eq(onboardingProgress.userId, request.session!.user.id));
+        if (!row) return { step: "1", data: null, updatedAt: new Date().toISOString() } as any;
+        return { step: row.step, data: row.data, updatedAt: row.updatedAt } as any;
+      } catch (e: any) {
+        try {
+          await db.run(`CREATE TABLE IF NOT EXISTS onboarding_progress (user_id TEXT PRIMARY KEY, step TEXT NOT NULL DEFAULT '1', data TEXT, updated_at TEXT NOT NULL)` as any);
+          return { step: "1", data: null, updatedAt: new Date().toISOString() } as any;
+        } catch { return reply.status(500).send({ error: "failed" } as any); }
+      }
+    },
+  );
+
+  r.put(
+    "/onboarding/progress",
+    { preHandler: requireSession, schema: { body: onboardingProgressSchema, response: { 200: onboardingProgressResponseSchema, 500: errorResponseSchema } } },
+    async (request, reply) => {
+      const body = request.body as any;
+      const step = String(body.step ?? "1");
+      const data = body.data ? JSON.stringify(body.data) : null;
+      try {
+        const { onboardingProgress } = await import("../../db/schema");
+        const [existing] = await db.select().from(onboardingProgress).where(eq(onboardingProgress.userId, request.session!.user.id));
+        if (!existing) {
+          const [row] = await db.insert(onboardingProgress).values({ userId: request.session!.user.id, step, data, updatedAt: new Date().toISOString() } as any).returning();
+          return { step: row.step, data: row.data, updatedAt: row.updatedAt } as any;
+        } else {
+          const [row] = await db.update(onboardingProgress).set({ step, data, updatedAt: new Date().toISOString() } as any).where(eq(onboardingProgress.userId, request.session!.user.id)).returning();
+          return { step: row.step, data: row.data, updatedAt: row.updatedAt } as any;
+        }
+      } catch {
+        try {
+          await db.run(`CREATE TABLE IF NOT EXISTS onboarding_progress (user_id TEXT PRIMARY KEY, step TEXT NOT NULL DEFAULT '1', data TEXT, updated_at TEXT NOT NULL)` as any);
+          const { onboardingProgress } = await import("../../db/schema");
+          const [row] = await db.insert(onboardingProgress).values({ userId: request.session!.user.id, step, data, updatedAt: new Date().toISOString() } as any).returning();
+          return { step: row.step, data: row.data, updatedAt: row.updatedAt } as any;
+        } catch { return reply.status(500).send({ error: "failed" } as any); }
+      }
+    },
+  );
+
   // ponytail: persona-driven content generation — user only picks a content type; the brand persona drives everything
   r.post(
     "/ai/generate-content",
@@ -358,7 +542,7 @@ export async function aiRoutes(app: FastifyInstance) {
 
       let model;
       try {
-        model = await resolveUserModel(userId);
+        model = await resolveUserModel(userId, "text");
       } catch (e: any) {
         return reply.status(400).send({ error: e?.message || "No AI provider configured" } as any);
       }

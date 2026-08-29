@@ -2,19 +2,63 @@ import { z } from "zod";
 import { createWorkflow, createStep } from "@mastra/core/workflows";
 import { and, eq } from "drizzle-orm";
 import { db } from "../../lib/db";
-import { aiConfigs, companies } from "../../db/schema";
+import { aiConfigs, aiPreferences, companies } from "../../db/schema";
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOllama } from "ollama-ai-provider-v2";
 
+export type TaskKind = "video" | "image" | "text" | "default";
+
 // ponytail: strict DB-only — no env fallback; provider-aware routing so openrouter key hits openrouter, not api.openai.com
-export async function resolveUserModel(userId: string) {
-  const [def] = await db
-    .select()
-    .from(aiConfigs)
-    .where(and(eq(aiConfigs.userId, userId), eq(aiConfigs.isDefault, "1")));
-  const cfg = def ?? (await db.select().from(aiConfigs).where(eq(aiConfigs.userId, userId)).then((r) => r[0]));
+// task-aware: uses ai_preferences fallback to isDefault/first
+export async function resolveUserModel(userId: string, task: TaskKind = "default") {
+  // ponytail: provider+model independent — prefs hold per-task {configId, model}; config holds credentials
+  if (task !== "default") {
+    try {
+      const [pref] = await db.select().from(aiPreferences).where(eq(aiPreferences.userId, userId));
+      const pair =
+        task === "video" ? { id: pref?.videoConfigId ?? null, model: (pref as any)?.videoModel ?? null } :
+        task === "image" ? { id: pref?.imageConfigId ?? null, model: (pref as any)?.imageModel ?? null } :
+        { id: pref?.textConfigId ?? null, model: (pref as any)?.textModel ?? null };
+      if (pair.id && pair.model) {
+        const [row] = await db.select().from(aiConfigs).where(and(eq(aiConfigs.id, pair.id), eq(aiConfigs.userId, userId)));
+        if (row) {
+          const provider = row.provider as string;
+          const model = pair.model;
+          const apiKey = row.apiKey ?? "not-set";
+          if (provider === "ollama") return createOllama(row.baseUrl ? { baseURL: row.baseUrl } : undefined)(model);
+          if (provider === "anthropic") {
+            if (row.baseUrl) return createOpenAI({ apiKey, baseURL: row.baseUrl })(model);
+            return createAnthropic({ apiKey })(model);
+          }
+          if (provider === "google") {
+            if (row.baseUrl) return createOpenAI({ apiKey, baseURL: row.baseUrl })(model);
+            return createGoogleGenerativeAI({ apiKey })(model);
+          }
+          const baseURL = row.baseUrl ?? (provider === "openrouter" ? "https://openrouter.ai/api/v1" : provider === "openai" ? "https://api.openai.com/v1" : provider === "xai" ? "https://api.x.ai/v1" : undefined);
+          return createOpenAI({ apiKey, baseURL })(model);
+        }
+      }
+      if (pair.id || pair.model) {
+        // partial — require both
+        throw new Error(`Configure ${task} provider + model in Settings → AI Providers (both required)`);
+      }
+    } catch (e: any) {
+      if (e?.message?.includes("Configure")) throw e;
+      // table missing before migration — fall through
+    }
+  }
+
+  // fallback: isDefault/first, uses its own model column (legacy)
+  let cfg: typeof aiConfigs.$inferSelect | undefined;
+  {
+    const [def] = await db
+      .select()
+      .from(aiConfigs)
+      .where(and(eq(aiConfigs.userId, userId), eq(aiConfigs.isDefault, "1")));
+    cfg = def ?? (await db.select().from(aiConfigs).where(eq(aiConfigs.userId, userId)).then((r) => r[0]));
+  }
   if (!cfg?.model) throw new Error("No AI provider configured — add one in Settings → AI Providers and set as Default");
   const provider = cfg.provider as string;
   const model = cfg.model!;
@@ -98,7 +142,7 @@ const generateStep = createStep({
     companyId: z.string(),
   }),
   execute: async ({ inputData }) => {
-    const model = await resolveUserModel(inputData.userId);
+    const model = await resolveUserModel(inputData.userId, "text");
     const agent = new (await import("@mastra/core/agent")).Agent({
       id: "persona-agent",
       name: "persona-agent",

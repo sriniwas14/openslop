@@ -67,20 +67,28 @@ export async function companyRoutes(app: FastifyInstance) {
           // ponytail: workflow failed — error event handled below, "just try again"
         }
 
-        if (closed) return;
-
         const [fresh] = await db
           .select()
           .from(companies)
           .where(and(eq(companies.id, row.id), eq(companies.userId, request.session!.user.id)));
-        if (fresh?.persona) {
-          write("done", fresh);
-        } else {
+        let personaOk = !!fresh?.persona;
+        let curPersona: typeof fresh | null = null;
+        if (!personaOk) {
           const [cur] = await db.select().from(companies).where(eq(companies.id, row.id));
-          if (cur?.persona) write("done", cur);
-          else write("error", { message: "persona generation failed" });
+          curPersona = cur ?? null;
+          personaOk = !!cur?.persona;
+        }
+
+        if (personaOk) {
+          if (!closed) write("done", fresh ?? curPersona!);
+        } else {
+          // ponytail: atomic create — delete orphan so wizard doesn't complete
+          await db.delete(companies).where(eq(companies.id, row.id)).catch(() => {});
+          if (!closed) write("error", { message: "persona generation failed" });
+          return;
         }
       } catch (e: any) {
+        await db.delete(companies).where(eq(companies.id, row.id)).catch(() => {});
         if (!closed) write("error", { message: e?.message ?? String(e) });
       } finally {
         if (!reply.raw.writableEnded) reply.raw.end();

@@ -75,9 +75,35 @@ export const contents = sqliteTable(
   ],
 );
 
+// ponytail: per-task routing — provider + model independent; model string per task
+export const aiPreferences = sqliteTable("ai_preferences", {
+  userId: text("user_id").primaryKey(),
+  videoConfigId: text("video_config_id"),
+  videoModel: text("video_model"),
+  imageConfigId: text("image_config_id"),
+  imageModel: text("image_model"),
+  textConfigId: text("text_config_id"),
+  textModel: text("text_model"),
+  updatedAt: text("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+
+// ponytail: onboarding resume — single row per user, JSON blob for partial progress
+export const onboardingProgress = sqliteTable("onboarding_progress", {
+  userId: text("user_id").primaryKey(),
+  step: text("step").notNull().default("1"),
+  data: text("data"), // JSON string
+  updatedAt: text("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+
 export type Company = typeof companies.$inferSelect;
 export type NewCompany = typeof companies.$inferInsert;
 export type AiConfig = typeof aiConfigs.$inferSelect;
 export type NewAiConfig = typeof aiConfigs.$inferInsert;
 export type Content = typeof contents.$inferSelect;
 export type NewContent = typeof contents.$inferInsert;
+export type AiPreferences = typeof aiPreferences.$inferSelect;
+export type OnboardingProgress = typeof onboardingProgress.$inferSelect;

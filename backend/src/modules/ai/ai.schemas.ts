@@ -52,3 +52,32 @@ export const generatedContentSchema = z.object({
 });
 
 export const errorResponseSchema = z.object({ error: z.string() });
+
+export const preferencesSchema = z.object({
+  videoConfigId: z.string().nullable(),
+  videoModel: z.string().nullable(),
+  imageConfigId: z.string().nullable(),
+  imageModel: z.string().nullable(),
+  textConfigId: z.string().nullable(),
+  textModel: z.string().nullable(),
+});
+
+export const updatePreferencesSchema = z.object({
+  videoConfigId: z.string().min(1).nullable().optional(),
+  videoModel: z.string().max(255).nullable().optional().or(z.literal("")),
+  imageConfigId: z.string().min(1).nullable().optional(),
+  imageModel: z.string().max(255).nullable().optional().or(z.literal("")),
+  textConfigId: z.string().min(1).nullable().optional(),
+  textModel: z.string().max(255).nullable().optional().or(z.literal("")),
+});
+
+export const onboardingProgressSchema = z.object({
+  step: z.enum(["1", "2", "3"]).or(z.number().int().min(1).max(3)),
+  data: z.record(z.string(), z.unknown()).nullable().optional(),
+});
+
+export const onboardingProgressResponseSchema = z.object({
+  step: z.string(),
+  data: z.string().nullable(),
+  updatedAt: z.string(),
+});

@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { AI_PROVIDERS, type AiConfig, type AiProvider, createAiConfig, deleteAiConfig, listAiConfigs, setDefaultAiConfig, updateAiConfig } from '@/services/ai'
+import { AI_PROVIDERS, type AiConfig, type AiPreferences, type AiProvider, createAiConfig, deleteAiConfig, getAiPreferences, listAiConfigs, setDefaultAiConfig, updateAiConfig, updateAiPreferences } from '@/services/ai'
 import { type Company, createCompanySSE, deleteCompany, listCompanies, updateCompany } from '@/services/companies'
 import { useCompany } from '@/context/CompanyContext'
 import { cn } from '@/lib/utils'
@@ -148,34 +149,48 @@ function AiProvidersTab() {
   const [provider, setProvider] = useState<AiProvider>('openrouter')
   const [apiKey, setApiKey] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
-  const [model, setModel] = useState('')
   const [name, setName] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [prefs, setPrefs] = useState<AiPreferences>({ videoConfigId: null, videoModel: null, imageConfigId: null, imageModel: null, textConfigId: null, textModel: null })
+  const [prefsSaving, setPrefsSaving] = useState(false)
 
   async function refresh() {
-    try { setLoading(true); setConfigs(await listAiConfigs()) } catch (e: any) { setError(e.message) } finally { setLoading(false) }
+    try {
+      setLoading(true)
+      const [c, p] = await Promise.all([listAiConfigs(), getAiPreferences().catch(() => ({ videoConfigId: null, videoModel: null, imageConfigId: null, imageModel: null, textConfigId: null, textModel: null } as AiPreferences))])
+      setConfigs(c); setPrefs(p as AiPreferences)
+    } catch (e: any) { setError(e.message) } finally { setLoading(false) }
   }
   useEffect(() => { refresh() }, [])
-  function resetForm() { setProvider('openrouter'); setApiKey(''); setBaseUrl(''); setModel(''); setName(''); setEditingId(null) }
+  function resetForm() { setProvider('openrouter'); setApiKey(''); setBaseUrl(''); setName(''); setEditingId(null); setError(null) }
+  function openAdd() { resetForm(); setDialogOpen(true) }
+  function openEdit(c: AiConfig) { setEditingId(c.id); setProvider(c.provider as AiProvider); setApiKey(''); setBaseUrl(c.baseUrl ?? ''); setName(c.name ?? ''); setDialogOpen(true) }
+  function closeDialog() { setDialogOpen(false); resetForm() }
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault(); setSaving(true); setError(null)
     try {
-      if (editingId) await updateAiConfig(editingId, { provider, apiKey: apiKey || undefined, baseUrl: baseUrl || undefined, model: model || undefined, name: name || undefined })
-      else await createAiConfig({ provider, apiKey: apiKey || undefined, baseUrl: baseUrl || undefined, model: model || undefined, name: name || undefined, isDefault: configs.length === 0 })
-      resetForm(); await refresh()
+      if (editingId) await updateAiConfig(editingId, { provider, apiKey: apiKey || undefined, baseUrl: baseUrl || undefined, name: name || undefined })
+      else await createAiConfig({ provider, apiKey: apiKey || undefined, baseUrl: baseUrl || undefined, name: name || undefined, isDefault: configs.length === 0 })
+      closeDialog(); await refresh()
     } catch (e: any) { setError(e.message) } finally { setSaving(false) }
   }
-  function startEdit(c: AiConfig) { setEditingId(c.id); setProvider(c.provider as AiProvider); setApiKey(''); setBaseUrl(c.baseUrl ?? ''); setModel(c.model ?? ''); setName(c.name ?? '') }
   const showBaseUrl = provider === 'ollama' || provider === 'custom'
+  const getCfg = (id: string | null) => configs.find((c) => c.id === id) ?? null
   return (
     <Card>
       <CardHeader>
-        <CardTitle>AI Providers</CardTitle>
-        <CardDescription>Store API keys per provider (plaintext, per-user). Select your default model for persona generation.</CardDescription>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <CardTitle>AI Providers</CardTitle>
+            <CardDescription>Store API keys per provider (plaintext, per-user). Select your default model for persona generation.</CardDescription>
+          </div>
+          <Button size="sm" onClick={openAdd}>Add provider</Button>
+        </div>
       </CardHeader>
       <CardContent className="grid gap-6">
-        {loading ? <div className="text-sm text-muted-foreground">Loading…</div> : configs.length === 0 ? <div className="text-sm text-muted-foreground">No providers yet — add one below.</div> : (
+        {loading ? <div className="text-sm text-muted-foreground">Loading…</div> : configs.length === 0 ? <div className="text-sm text-muted-foreground">No providers yet — click Add provider.</div> : (
           <div className="grid gap-2">
             {configs.map((c) => (
               <div key={c.id} className="flex items-center justify-between rounded-md border px-3 py-2">
@@ -183,21 +198,92 @@ function AiProvidersTab() {
                   <div className="flex items-center gap-2"><span className="font-medium">{c.name || c.provider}</span><span className="rounded bg-muted px-1.5 py-0.5 text-xs">{c.provider}</span>{c.isDefault && <span className="rounded bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">default</span>}</div>
                   <div className="truncate text-xs text-muted-foreground">{c.model || 'no model'} · {c.apiKeyMasked ?? 'no key'} {c.baseUrl ? `· ${c.baseUrl}` : ''}</div>
                 </div>
-                <div className="flex gap-1">{!c.isDefault && <Button variant="outline" size="sm" onClick={async () => { await setDefaultAiConfig(c.id); await refresh() }}>Default</Button>}<Button variant="outline" size="sm" onClick={() => startEdit(c)}>Edit</Button><Button variant="ghost" size="sm" onClick={async () => { await deleteAiConfig(c.id); await refresh() }}>Delete</Button></div>
+                <div className="flex gap-1">{!c.isDefault && <Button variant="outline" size="sm" onClick={async () => { await setDefaultAiConfig(c.id); await refresh() }}>Default</Button>}<Button variant="outline" size="sm" onClick={() => openEdit(c)}>Edit</Button><Button variant="ghost" size="sm" onClick={async () => { await deleteAiConfig(c.id); await refresh() }}>Delete</Button></div>
               </div>
             ))}
           </div>
         )}
-        <form onSubmit={onSubmit} className="grid gap-4 rounded-lg border p-4">
-          <h3 className="font-medium">{editingId ? 'Edit provider' : 'Add provider'}</h3>
-          <div className="grid gap-2"><Label>Provider</Label><select value={provider} onChange={(e) => setProvider(e.target.value as AiProvider)} className="h-9 rounded-md border bg-transparent px-3 text-sm">{AI_PROVIDERS.map((p) => <option key={p} value={p}>{p}</option>)}</select></div>
-          <div className="grid gap-2"><Label htmlFor="ai-name">Label (optional)</Label><Input id="ai-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="My OpenRouter" maxLength={255} /></div>
-          <div className="grid gap-2"><Label htmlFor="ai-key">API Key</Label><Input id="ai-key" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={editingId ? 'leave blank to keep' : 'sk-...'} />{provider === 'ollama' && <p className="text-xs text-muted-foreground">Ollama usually needs no key.</p>}</div>
-          {showBaseUrl && <div className="grid gap-2"><Label htmlFor="ai-base">Base URL</Label><Input id="ai-base" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={provider === 'ollama' ? 'http://localhost:11434' : 'https://api.example.com/v1'} /></div>}
-          <div className="grid gap-2"><Label>Model</Label><ModelSelector provider={provider} configId={editingId ?? undefined} apiKey={apiKey || undefined} baseUrl={baseUrl || undefined} value={model} onChange={setModel} /><p className="text-xs text-muted-foreground">Curated list shown immediately — type API key above for live preview (openai/openrouter/xai/ollama).</p></div>
+
+        {/* ponytail: per-task routing — provider + model independent */}
+        <div className="grid gap-4 rounded-lg border p-4">
+          <h3 className="font-medium">Model routing <span className="text-xs text-muted-foreground font-normal">— each task requires provider + model</span></h3>
+          <p className="text-xs text-muted-foreground">Provider holds credentials, model is chosen per task. Adding a provider does not pick a model.</p>
+          {(["video", "image", "text"] as const).map((task) => {
+            const cfgId = task === "video" ? prefs.videoConfigId : task === "image" ? prefs.imageConfigId : prefs.textConfigId
+            const modelVal = task === "video" ? prefs.videoModel ?? "" : task === "image" ? prefs.imageModel ?? "" : prefs.textModel ?? ""
+            const cfg = getCfg(cfgId ?? null)
+            const providerForModel: AiProvider = (cfg?.provider as AiProvider) ?? "openrouter"
+            return (
+              <div key={task} className="grid gap-3 rounded-md border bg-muted/20 p-3">
+                <Label className="capitalize">{task} <span className="text-destructive">*</span></Label>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <div className="grid gap-1.5">
+                    <span className="text-xs text-muted-foreground">Provider</span>
+                    <select
+                      value={cfgId ?? ""}
+                      onChange={async (e) => {
+                        const v = e.target.value || null
+                        const key = task === "video" ? "videoConfigId" : task === "image" ? "imageConfigId" : "textConfigId"
+                        const next = { ...prefs, [key]: v } as AiPreferences
+                        // clear model if provider cleared
+                        if (!v) (next as any)[task === "video" ? "videoModel" : task === "image" ? "imageModel" : "textModel"] = null
+                        setPrefs(next)
+                        setPrefsSaving(true)
+                        try { await updateAiPreferences({ [key]: v, ...(v ? {} : { [task === "video" ? "videoModel" : task === "image" ? "imageModel" : "textModel"]: null } as any) }) } catch (err: any) { setError(err.message) } finally { setPrefsSaving(false) }
+                      }}
+                      disabled={configs.length === 0 || prefsSaving}
+                      className="h-9 rounded-md border bg-background px-3 text-sm disabled:opacity-50"
+                    >
+                      <option value="">Select provider</option>
+                      {configs.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name || c.provider} ({c.provider})</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="grid gap-1.5">
+                    <span className="text-xs text-muted-foreground">Model</span>
+                    <ModelSelector
+                      provider={providerForModel}
+                      configId={cfgId ?? undefined}
+                      value={modelVal}
+                      onChange={async (v) => {
+                        const key = task === "video" ? "videoModel" : task === "image" ? "imageModel" : "textModel"
+                        const next = { ...prefs, [key]: v || null } as AiPreferences
+                        setPrefs(next)
+                        setPrefsSaving(true)
+                        try { await updateAiPreferences({ [key]: v || null } as any) } catch (err: any) { setError(err.message) } finally { setPrefsSaving(false) }
+                      }}
+                      disabled={!cfgId || prefsSaving}
+                    />
+                  </div>
+                </div>
+                {!cfgId || !modelVal ? <p className="text-xs text-amber-600">Required — select provider and model for {task}.</p> : null}
+              </div>
+            )
+          })}
+          {prefsSaving && <p className="text-xs text-muted-foreground">Saving…</p>}
           {error && <p className="text-sm text-destructive">{error}</p>}
-          <div className="flex gap-2"><Button type="submit" disabled={saving || !provider}>{saving ? 'Saving…' : editingId ? 'Update' : 'Add'}</Button>{editingId && <Button type="button" variant="outline" onClick={resetForm}>Cancel</Button>}</div>
-        </form>
+        </div>
+
+        <Dialog open={dialogOpen} onOpenChange={(v) => { if (!v) closeDialog(); else setDialogOpen(v) }}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>{editingId ? 'Edit provider' : 'Add provider'}</DialogTitle>
+              <DialogDescription>Provider holds credentials only. Pick its model per task in routing above.</DialogDescription>
+            </DialogHeader>
+            <form onSubmit={onSubmit} className="grid gap-4">
+              <div className="grid gap-2"><Label>Provider</Label><select value={provider} onChange={(e) => setProvider(e.target.value as AiProvider)} className="h-9 rounded-md border bg-transparent px-3 text-sm">{AI_PROVIDERS.map((p) => <option key={p} value={p}>{p}</option>)}</select></div>
+              <div className="grid gap-2"><Label htmlFor="ai-name">Label (optional)</Label><Input id="ai-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="My OpenRouter" maxLength={255} /></div>
+              <div className="grid gap-2"><Label htmlFor="ai-key">API Key</Label><Input id="ai-key" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={editingId ? 'leave blank to keep' : 'sk-...'} />{provider === 'ollama' && <p className="text-xs text-muted-foreground">Ollama usually needs no key.</p>}</div>
+              {showBaseUrl && <div className="grid gap-2"><Label htmlFor="ai-base">Base URL</Label><Input id="ai-base" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={provider === 'ollama' ? 'http://localhost:11434' : 'https://api.example.com/v1'} /></div>}
+              {error && <p className="text-sm text-destructive">{error}</p>}
+              <DialogFooter>
+                <Button type="button" variant="ghost" onClick={closeDialog}>Cancel</Button>
+                <Button type="submit" disabled={saving || !provider}>{saving ? 'Saving…' : editingId ? 'Update' : 'Add'}</Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
       </CardContent>
     </Card>
   )
