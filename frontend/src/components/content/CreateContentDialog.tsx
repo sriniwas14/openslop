@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Check, Loader2, RefreshCw, Sparkles } from 'lucide-react'
+import { Check, Loader2, RefreshCw } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -9,147 +9,135 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
-import { generateContent } from '@/services/ai'
 import { useCompany } from '@/context/CompanyContext'
-import {
-  CONTENT_TYPES,
-  PLATFORMS,
-  type ContentItem,
-  type ContentType,
-  type Platform,
-} from './data'
-import { AiScorePill } from './primitives'
+import { fetchIdeas, generateFromIdea, type Idea } from '@/services/content'
+import { CONTENT_TYPES, type ContentItem, type ContentType } from './data'
 
 const TYPE_OPTIONS = Object.entries(CONTENT_TYPES) as [ContentType, (typeof CONTENT_TYPES)[ContentType]][]
 
-function toDateString(iso: string | null): string {
-  if (!iso) return ''
-  const d = new Date(iso)
-  const m = `${d.getMonth() + 1}`.padStart(2, '0')
-  const day = `${d.getDate()}`.padStart(2, '0')
-  return `${d.getFullYear()}-${m}-${day}`
-}
-
-function isPlatform(value: string): value is Platform {
-  return value in PLATFORMS
+function toContentItem(row: any): ContentItem {
+  // ponytail: map backend content row to local ContentItem (platforms/aiScore are UI-only)
+  const kind = row.kind as ContentType
+  const meta = CONTENT_TYPES[kind]
+  const summary =
+    row.scripts?.[0]?.prompt?.slice(0, 220) ??
+    row.images?.[0]?.text?.slice(0, 220) ??
+    row.title
+  const rawFormat = row.format as string | null
+  const format: 'vertical' | 'horizontal' | null =
+    rawFormat === 'vertical' || rawFormat === 'horizontal' ? rawFormat : kind === 'carousel' ? 'horizontal' : 'vertical'
+  return {
+    id: row.id ?? crypto.randomUUID(),
+    title: row.title,
+    summary,
+    type: kind,
+    platforms: meta?.platforms?.slice(0, 2) ?? ['instagram'],
+    status: row.status === 'published' ? 'published' : 'draft',
+    scheduledAt: row.scheduledAt ?? null,
+    aiScore: Math.round(55 + Math.random() * 35),
+    format,
+  }
 }
 
 export default function CreateContentDialog({
   open,
   onOpenChange,
-  initialDate,
+  initialDate: _initialDate,
   onCreate,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
-  /** optional ISO date used to pre-fill the schedule field (e.g. from calendar click) */
   initialDate: string | null
   onCreate: (item: ContentItem) => void
 }) {
   const { companies, selectedId } = useCompany()
   const company = companies.find((c) => c.id === selectedId) ?? companies[0] ?? null
 
-  const [type, setType] = useState<ContentType | null>(null)
-  const [step, setStep] = useState<'type' | 'details'>('type')
+  const [kind, setKind] = useState<ContentType | null>(null)
+  const [step, setStep] = useState<'type' | 'ideas'>('type')
+
+  const [ideas, setIdeas] = useState<Idea[] | null>(null)
+  const [ideasLoading, setIdeasLoading] = useState(false)
+  const [ideasError, setIdeasError] = useState<string | null>(null)
+  const [selectedId2, setSelectedId2] = useState<string | null>(null)
+
   const [generating, setGenerating] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  // AI-generated, user-editable plan
-  const [title, setTitle] = useState('')
-  const [summary, setSummary] = useState('')
-  const [platforms, setPlatforms] = useState<Platform[]>([])
-  const [aiScore, setAiScore] = useState<number | null>(null)
-  const [date, setDate] = useState('')
+  const [generateError, setGenerateError] = useState<string | null>(null)
 
-  const generated = aiScore !== null && title !== ''
+  const selectedIdea = ideas?.find((i) => i.id === selectedId2) ?? null
 
-  // reset the workflow every time the dialog opens
   useEffect(() => {
     if (!open) return
-    setType(null)
+    setKind(null)
     setStep('type')
+    setIdeas(null)
+    setIdeasLoading(false)
+    setIdeasError(null)
+    setSelectedId2(null)
     setGenerating(false)
-    setError(null)
-    setTitle('')
-    setSummary('')
-    setPlatforms([])
-    setAiScore(null)
-    setDate(toDateString(initialDate))
-  }, [open, initialDate])
+    setGenerateError(null)
+  }, [open])
 
-  // persona-driven generation — the only input is the content type
-  const handleGenerate = useCallback(async () => {
-    if (!type || generating) return
+  const loadIdeas = useCallback(async (k: ContentType) => {
     if (!company) {
-      setError('No brand selected — add a company first.')
+      setIdeasError('No brand selected — add a company first.')
       return
     }
-    setGenerating(true)
-    setError(null)
+    setIdeasLoading(true)
+    setIdeasError(null)
+    setIdeas(null)
+    setSelectedId2(null)
     try {
-      const result = await generateContent({ type, companyId: company.id })
-      setTitle(result.title)
-      setSummary(result.summary)
-      setPlatforms(result.platforms.filter(isPlatform))
-      setAiScore(result.aiScore)
+      const res = await fetchIdeas(company.id, { kind: k, count: 5 })
+      setIdeas(res.ideas)
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Content generation failed — try again.')
+      setIdeasError(e instanceof Error ? e.message : 'Failed to load ideas — try again.')
+    } finally {
+      setIdeasLoading(false)
+    }
+  }, [company])
+
+  const handlePickKind = (k: ContentType) => {
+    setKind(k)
+    setStep('ideas')
+    void loadIdeas(k)
+  }
+
+  const handleGenerate = async () => {
+    if (!selectedIdea || !kind || !company || generating) return
+    setGenerating(true)
+    setGenerateError(null)
+    try {
+      const row = await generateFromIdea(company.id, {
+        idea: selectedIdea,
+        selectedHook: selectedIdea.hooks[0],
+        kind,
+      })
+      onCreate(toContentItem(row))
+      onOpenChange(false)
+    } catch (e) {
+      setGenerateError(e instanceof Error ? e.message : 'Generation failed — try again.')
     } finally {
       setGenerating(false)
     }
-  }, [type, generating, company])
-
-  // generate automatically as soon as a type is picked
-  useEffect(() => {
-    if (open && step === 'details' && type && !generated && !generating && !error) {
-      void handleGenerate()
-    }
-  }, [open, step, type, generated, generating, error, handleGenerate])
-
-  const handleCreate = () => {
-    if (!type || !title.trim()) return
-    onCreate({
-      id: crypto.randomUUID(),
-      title: title.trim(),
-      summary: summary.trim() || 'Planned from your brand persona.',
-      type,
-      platforms: platforms.length > 0 ? platforms : [CONTENT_TYPES[type].platforms[0]],
-      status: date ? 'scheduled' : 'draft',
-      scheduledAt: date ? new Date(`${date}T09:00:00`).toISOString() : null,
-      aiScore: aiScore ?? Math.round(55 + Math.random() * 35),
-    })
-    onOpenChange(false)
   }
 
-  const backToTypes = () => {
-    setStep('type')
-    setError(null)
-    setTitle('')
-    setSummary('')
-    setPlatforms([])
-    setAiScore(null)
-  }
-
-  const meta = type ? CONTENT_TYPES[type] : null
+  const meta = kind ? CONTENT_TYPES[kind] : null
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={step === 'type' ? 'sm:max-w-2xl' : 'sm:max-w-lg'}>
-        {step === 'type' || !meta ? (
+      <DialogContent className={step === 'type' ? 'sm:max-w-2xl' : 'sm:max-w-xl'}>
+        {step === 'type' ? (
           <>
             <DialogHeader>
               <DialogTitle className="text-lg">Create Content</DialogTitle>
-              <DialogDescription>
-                Pick a content type — AI will plan it from your brand persona.
-              </DialogDescription>
+              <DialogDescription>Pick a content type — we'll generate ideas from your brand persona.</DialogDescription>
             </DialogHeader>
 
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2" role="radiogroup" aria-label="Content type">
+            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3" role="radiogroup" aria-label="Content type">
               {TYPE_OPTIONS.map(([value, m]) => {
-                const selected = type === value
+                const selected = kind === value
                 const Icon = m.icon
                 return (
                   <button
@@ -157,22 +145,14 @@ export default function CreateContentDialog({
                     type="button"
                     role="radio"
                     aria-checked={selected}
-                    onClick={() => {
-                      setType(value)
-                      setStep('details')
-                    }}
+                    onClick={() => handlePickKind(value)}
                     className={cn(
-                      'group relative flex items-start gap-3 rounded-xl border p-3.5 text-left transition-all outline-none',
+                      'group relative flex flex-col items-start gap-3 rounded-xl border p-3.5 text-left transition-all outline-none',
                       'hover:border-foreground/25 hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50',
                       selected && 'border-foreground bg-muted/60 ring-2 ring-foreground/70',
                     )}
                   >
-                    <div
-                      className={cn(
-                        'grid size-9 shrink-0 place-items-center rounded-lg bg-gradient-to-br text-white shadow-xs',
-                        m.gradient,
-                      )}
-                    >
+                    <div className={cn('grid size-9 place-items-center rounded-lg bg-gradient-to-br text-white shadow-xs', m.gradient)}>
                       <Icon className="size-4.5" />
                     </div>
                     <div className="min-w-0">
@@ -190,106 +170,87 @@ export default function CreateContentDialog({
             </div>
 
             <DialogFooter>
-              <Button variant="ghost" onClick={() => onOpenChange(false)}>
-                Cancel
-              </Button>
+              <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
             </DialogFooter>
           </>
         ) : (
           <>
             <DialogHeader>
               <div className="flex items-center gap-2.5">
-                <div className={cn('grid size-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br text-white', meta.gradient)}>
-                  <meta.icon className="size-4" />
-                </div>
+                {meta && (
+                  <div className={cn('grid size-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br text-white', meta.gradient)}>
+                    <meta.icon className="size-4" />
+                  </div>
+                )}
                 <div className="min-w-0">
-                  <DialogTitle className="text-lg">New {meta.label.toLowerCase()}</DialogTitle>
+                  <DialogTitle className="text-lg">Pick an idea</DialogTitle>
                   <DialogDescription>
-                    {company ? `Generated from ${company.name}'s brand persona.` : 'Generated from your brand persona.'}
+                    {company ? `Ideas from ${company.name}'s brand persona` : 'Ideas from your brand persona'} — select a row to generate.
                   </DialogDescription>
                 </div>
               </div>
             </DialogHeader>
 
-            <div className="grid gap-4">
-              {generating && (
+            <div className="grid gap-3">
+              {ideasLoading && (
                 <div className="grid place-items-center gap-3 rounded-xl border border-dashed px-4 py-10 text-center">
                   <Loader2 className="size-6 animate-spin text-muted-foreground" />
-                  <div className="grid gap-1">
-                    <p className="text-sm font-medium">Generating from your brand persona…</p>
-                    <p className="text-xs text-muted-foreground">
-                      AI is matching {meta.label.toLowerCase()} ideas to your audience, voice and positioning.
-                    </p>
-                  </div>
+                  <p className="text-sm font-medium">Loading ideas…</p>
                 </div>
               )}
 
-              {!generating && error && (
+              {!ideasLoading && ideasError && (
                 <div className="grid gap-3 rounded-xl border border-dashed px-4 py-8 text-center">
-                  <p className="text-sm text-destructive">{error}</p>
-                  <Button variant="outline" className="justify-self-center" onClick={handleGenerate}>
+                  <p className="text-sm text-destructive">{ideasError}</p>
+                  <Button variant="outline" className="justify-self-center" onClick={() => kind && loadIdeas(kind)}>
                     <RefreshCw data-icon="inline-start" />
                     Try again
                   </Button>
                 </div>
               )}
 
-              {!generating && !error && generated && (
-                <div className="grid gap-3.5 rounded-xl border bg-muted/30 p-3.5">
-                  <div className="flex items-center justify-between">
-                    <span className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
-                      <Sparkles className="size-3" />
-                      AI plan
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <AiScorePill score={aiScore} />
-                      <Button variant="ghost" size="xs" onClick={handleGenerate} title="Regenerate">
-                        <RefreshCw data-icon="inline-start" />
-                        Regenerate
-                      </Button>
-                    </div>
-                  </div>
-
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="content-title">Title</Label>
-                    <Input id="content-title" value={title} onChange={(e) => setTitle(e.target.value)} />
-                  </div>
-
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="content-summary">Description</Label>
-                    <Textarea id="content-summary" rows={2} value={summary} onChange={(e) => setSummary(e.target.value)} />
-                  </div>
-
-                  <div className="grid gap-1.5">
-                    <Label>Platforms</Label>
-                    <div className="flex flex-wrap gap-1.5">
-                      {(platforms.length > 0 ? platforms : meta.platforms.slice(0, 2)).map((p) => (
-                        <span
-                          key={p}
-                          className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium text-muted-foreground"
-                        >
-                          <span className={cn('size-1.5 rounded-full', PLATFORMS[p].dot)} />
-                          {PLATFORMS[p].label}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="content-date">Schedule</Label>
-                    <Input id="content-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-                    <p className="text-xs text-muted-foreground">Leave empty to save as a draft.</p>
-                  </div>
+              {!ideasLoading && !ideasError && ideas && (
+                <div className="grid max-h-[42vh] gap-2 overflow-auto pr-1">
+                  {ideas.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No ideas returned — try again.</p>}
+                  {ideas.map((idea) => {
+                    const sel = selectedId2 === idea.id
+                    return (
+                      <button
+                        key={idea.id}
+                        type="button"
+                        onClick={() => setSelectedId2(idea.id)}
+                        className={cn(
+                          'rounded-xl border p-3 text-left transition-colors outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+                          sel ? 'border-foreground bg-muted/60' : 'hover:bg-muted/40',
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="text-sm font-semibold leading-tight">{idea.title}</div>
+                          {sel && <span className="grid size-5 shrink-0 place-items-center rounded-full bg-foreground text-background"><Check className="size-3" /></span>}
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground line-clamp-2">{idea.painPoint}</div>
+                        {idea.angle && <div className="mt-1 text-xs italic text-muted-foreground/80">{idea.angle}</div>}
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {idea.hooks.slice(0, 3).map((h, i) => (
+                            <span key={i} className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">"{h}"</span>
+                          ))}
+                        </div>
+                      </button>
+                    )
+                  })}
                 </div>
               )}
+
+              {generateError && <p className="text-sm text-destructive">{generateError}</p>}
             </div>
 
             <DialogFooter>
-              <Button variant="ghost" onClick={backToTypes} disabled={generating}>
+              <Button variant="ghost" onClick={() => { setStep('type'); setGenerateError(null) }} disabled={generating}>
                 Back
               </Button>
-              <Button disabled={!generated || !title.trim() || generating} onClick={handleCreate}>
-                {date ? 'Create & schedule' : 'Create draft'}
+              <Button onClick={handleGenerate} disabled={!selectedIdea || generating}>
+                {generating && <Loader2 className="animate-spin" data-icon="inline-start" />}
+                {generating ? 'Generating…' : 'Generate'}
               </Button>
             </DialogFooter>
           </>

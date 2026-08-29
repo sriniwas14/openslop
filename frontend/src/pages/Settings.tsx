@@ -5,9 +5,12 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { AI_PROVIDERS, type AiConfig, type AiProvider, createAiConfig, deleteAiConfig, listAiConfigs, setDefaultAiConfig, updateAiConfig } from '@/services/ai'
 import { type Company, createCompanySSE, deleteCompany, listCompanies, updateCompany } from '@/services/companies'
+import { useCompany } from '@/context/CompanyContext'
+import { cn } from '@/lib/utils'
 import ModelSelector from '@/components/ai/ModelSelector'
 
 function GeneralTab() {
+  const { selectedId, setSelectedId } = useCompany()
   const [companies, setCompanies] = useState<Company[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -75,19 +78,26 @@ function GeneralTab() {
           <div className="text-sm text-muted-foreground">No companies yet — add one below.</div>
         ) : (
           <div className="grid gap-2">
-            {companies.map((c) => (
-              <div key={c.id} className="flex items-center justify-between rounded-md border px-3 py-2">
-                <div className="min-w-0">
-                  <div className="font-medium truncate">{c.name}</div>
-                  <div className="truncate text-xs text-muted-foreground">{c.website ?? '—'} {c.persona ? `· ${c.persona.slice(0, 80)}…` : '· no persona'}</div>
-                  <div className="text-[11px] text-muted-foreground">{new Date(c.createdAt).toLocaleString()}</div>
+            {companies.map((c) => {
+              const isActive = c.id === selectedId
+              return (
+                <div key={c.id} className={cn('flex items-center justify-between rounded-md border px-3 py-2', isActive && 'border-primary bg-primary/[0.04] ring-1 ring-primary/20')}>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium truncate">{c.name}</span>
+                      {isActive && <span className="rounded-full bg-primary px-2 py-0.5 text-xs text-primary-foreground">Active</span>}
+                    </div>
+                    <div className="truncate text-xs text-muted-foreground">{c.website ?? '—'} {c.persona ? `· ${c.persona.slice(0, 80)}…` : '· no persona'}</div>
+                    <div className="text-[11px] text-muted-foreground">{new Date(c.createdAt).toLocaleString()}</div>
+                  </div>
+                  <div className="flex gap-1 shrink-0">
+                    {!isActive && <Button variant="ghost" size="sm" onClick={() => setSelectedId(c.id)}>Set active</Button>}
+                    <Button variant="outline" size="sm" onClick={() => startEdit(c)}>Edit</Button>
+                    <Button variant="ghost" size="sm" onClick={async () => { if (!confirm(`Delete ${c.name}?`)) return; await deleteCompany(c.id); await refresh() }}>Delete</Button>
+                  </div>
                 </div>
-                <div className="flex gap-1 shrink-0">
-                  <Button variant="outline" size="sm" onClick={() => startEdit(c)}>Edit</Button>
-                  <Button variant="ghost" size="sm" onClick={async () => { if (!confirm(`Delete ${c.name}?`)) return; await deleteCompany(c.id); await refresh() }}>Delete</Button>
-                </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
 

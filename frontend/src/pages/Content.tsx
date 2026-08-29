@@ -3,13 +3,7 @@ import { Plus, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-import {
-  STATUSES,
-  buildMockContent,
-  type ContentItem,
-  type ContentStatus,
-  type ViewMode,
-} from '@/components/content/data'
+import { STATUSES, type ContentItem, type ContentStatus, type ViewMode } from '@/components/content/data'
 import { ViewSwitcher } from '@/components/content/primitives'
 import ListView from '@/components/content/ListView'
 import CalendarView from '@/components/content/CalendarView'
@@ -35,8 +29,7 @@ const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
 ]
 
 export default function ContentPage() {
-  // mock store — swap for API calls when connecting the backend
-  const [items, setItems] = useState<ContentItem[]>(() => buildMockContent())
+  const [items, setItems] = useState<ContentItem[]>([])
   const [view, setViewState] = useState<ViewMode>(loadView)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
