@@ -63,6 +63,7 @@ export const contents = sqliteTable(
     scripts: text("scripts"), // JSON: { type: "aroll"|"broll", prompt }[]
     mediaUrl: text("media_url"), // primary generated media URL
     format: text("format"), // vertical | horizontal | null
+    duration: text("duration"), // 15|30|45 seconds for video, null for carousel
     scheduledAt: text("scheduled_at"), // ISO datetime, nullable (optional — drafts may omit)
     createdAt: text("created_at")
       .notNull()

@@ -22,6 +22,7 @@ export type ContentItem = {
   /** vertical = 9:16 (reel/tiktok), horizontal = 16:9 */
   format: 'vertical' | 'horizontal' | null
   mediaUrl?: string | null
+  duration?: number | null
 }
 
 /* -------------------------------- metadata -------------------------------- */

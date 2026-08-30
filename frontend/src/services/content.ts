@@ -44,6 +44,7 @@ export type ContentRow = {
   scripts: { type: 'aroll' | 'broll'; prompt: string }[] | null
   mediaUrl: string | null
   format: 'vertical' | 'horizontal' | null
+  duration: number | null
   scheduledAt: string | null
   createdAt: string
   updatedAt: string
@@ -53,9 +54,17 @@ export function listContent(companyId: string): Promise<ContentRow[]> {
   return fetch(`/companies/${companyId}/contents`, { credentials: 'include' }).then(handle<ContentRow[]>)
 }
 
+export function getContent(contentId: string): Promise<ContentRow> {
+  return fetch(`/contents/${contentId}`, { credentials: 'include' }).then(handle<ContentRow>)
+}
+
+export function renderVideo(contentId: string): Promise<ContentRow> {
+  return fetch(`/contents/${contentId}/render`, { method: 'POST', credentials: 'include' }).then(handle<ContentRow>)
+}
+
 export function generateFromIdea(
   companyId: string,
-  body: { idea: Idea; selectedHook: string; kind?: string; title?: string },
+  body: { idea: Idea; selectedHook: string; kind?: string; title?: string; duration?: 15 | 30 | 45 },
 ): Promise<unknown> {
   return fetch(`/companies/${companyId}/contents/generate`, {
     method: 'POST',

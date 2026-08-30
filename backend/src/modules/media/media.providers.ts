@@ -35,8 +35,15 @@ async function providerJson(url: string, init: RequestInit): Promise<any> {
   let parsed: any = null;
   try { parsed = body ? JSON.parse(body) : null; } catch { parsed = null; }
   if (!response.ok) {
+    const details =
+      parsed?.error?.details ??
+      parsed?.details ??
+      parsed?.errors ??
+      parsed?.error?.detail ??
+      null;
+    const detailStr = details ? `: ${JSON.stringify(details).slice(0, 500)}` : "";
     const message = parsed?.error?.message ?? parsed?.error ?? parsed?.message ?? body;
-    throw new Error(`${response.status} ${response.statusText}${message ? `: ${String(message).slice(0, 500)}` : ""}`);
+    throw new Error(`${response.status} ${response.statusText}${message ? `: ${String(message).slice(0, 500)}` : ""}${detailStr}`);
   }
   return parsed;
 }
@@ -45,17 +52,23 @@ function ratio(format?: "vertical" | "horizontal" | null) {
   return format === "horizontal" ? "16:9" : "9:16";
 }
 
+function runwayRatio(format?: "vertical" | "horizontal" | null) {
+  // Runway ratios are pixel dimensions per docs — 16:9 form is rejected (400)
+  return format === "horizontal" ? "1280:720" : "720:1280";
+}
+
 function runwayHeaders(apiKey: string) {
   return jsonHeaders({ Authorization: `Bearer ${apiKey}`, "X-Runway-Version": RUNWAY_VERSION });
 }
 
 async function startRunway(input: MediaInput): Promise<MediaPollResult> {
   if (!input.apiKey) throw new Error("Runway API key is required");
-  const endpoint = input.task === "image" ? "text_to_image" : "image_to_video";
+  const endpoint =
+    input.task === "image" ? "text_to_image" : input.inputUrl ? "image_to_video" : "text_to_video";
   const body: Record<string, unknown> = {
     model: input.model,
     promptText: input.prompt,
-    ratio: ratio(input.format),
+    ratio: runwayRatio(input.format),
   };
   if (input.task === "video") {
     body.duration = 5;

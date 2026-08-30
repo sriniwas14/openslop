@@ -24,6 +24,7 @@ const baseContentFields = {
   images: z.array(carouselImageSchema).max(20).optional(),
   scripts: z.array(scriptSchema).max(50).optional(),
   format: z.enum(["vertical", "horizontal"]).optional(),
+  duration: z.number().int().refine((v) => [15, 30, 45].includes(v), { message: "duration must be 15, 30 or 45" }).optional(),
   scheduledAt: z.string().datetime({ offset: true }).nullable().optional(),
 };
 
@@ -34,6 +35,7 @@ export const createContentSchema = z.object(baseContentFields).superRefine((v, c
     }
     if (v.scripts) ctx.addIssue({ code: "custom", path: ["scripts"], message: "scripts not allowed for carousel" });
     if (v.format) ctx.addIssue({ code: "custom", path: ["format"], message: "format not allowed for carousel" });
+    if (v.duration) ctx.addIssue({ code: "custom", path: ["duration"], message: "duration not allowed for carousel" });
   }
   if ((videoKinds as readonly string[]).includes(v.kind)) {
     if (!v.scripts || v.scripts.length === 0) {
@@ -41,6 +43,9 @@ export const createContentSchema = z.object(baseContentFields).superRefine((v, c
     }
     if (!v.format) {
       ctx.addIssue({ code: "custom", path: ["format"], message: "format required for talkinghead/greenscreen" });
+    }
+    if (!v.duration) {
+      ctx.addIssue({ code: "custom", path: ["duration"], message: "duration required for video types" });
     }
     if (v.images) ctx.addIssue({ code: "custom", path: ["images"], message: "images not allowed for video types" });
   }
@@ -65,6 +70,7 @@ export const contentResponseSchema = z.object({
   scripts: z.array(scriptSchema).nullable(),
   mediaUrl: z.string().nullable(),
   format: z.enum(["vertical", "horizontal"]).nullable(),
+  duration: z.number().int().nullable(),
   scheduledAt: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -103,6 +109,7 @@ export const generateFromIdeaSchema = z.object({
   selectedHook: z.string().min(1).max(280),
   kind: z.enum(contentKinds).optional(),
   title: z.string().min(1).max(255).optional(),
+  duration: z.number().int().refine((v) => [15, 30, 45].includes(v), { message: "duration must be 15, 30 or 45" }).optional(),
 }).refine((v) => !!v.idea || !!v.ideaId, { message: "idea or ideaId required" });
 
 // ponytail: helpers — sqlite stores JSON as text; parse on read, stringify on write
@@ -110,15 +117,19 @@ export function parseContentRow(row: {
   images: string | null;
   scripts: string | null;
   format: string | null;
+  duration: string | number | null;
   scheduledAt: string | null;
   [k: string]: unknown;
 }) {
+  const d = row.duration;
+  const duration = d == null ? null : typeof d === "number" ? d : Number(d);
   return {
     ...row,
     images: row.images ? (JSON.parse(row.images) as z.infer<typeof carouselImageSchema>[]) : null,
     scripts: row.scripts ? (JSON.parse(row.scripts) as z.infer<typeof scriptSchema>[]) : null,
     mediaUrl: (row.mediaUrl as string | null) ?? null,
     format: row.format as "vertical" | "horizontal" | null,
+    duration: Number.isFinite(duration as number) ? (duration as number) : null,
     scheduledAt: (row.scheduledAt as string | null) ?? null,
   };
 }
@@ -128,6 +139,7 @@ export function serializeContentInput(input: z.infer<typeof createContentSchema>
     ...input,
     status: input.status ?? "draft",
     scheduledAt: input.scheduledAt ? new Date(input.scheduledAt).toISOString() : null,
+    duration: (input as any).duration ?? null,
     images: input.images ? JSON.stringify(input.images) : null,
     scripts: input.scripts ? JSON.stringify(input.scripts) : null,
   };

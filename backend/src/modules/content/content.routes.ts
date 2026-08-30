@@ -7,6 +7,7 @@ import { companies, contents } from "../../db/schema";
 import { requireSession } from "../../plugins/auth";
 import { resolveUserModel } from "../company/company.workflow";
 import { queueContentMedia } from "../media/media.service";
+import { renderVideoForContent } from "../media/video.workflow";
 import {
   carouselImageSchema,
   companyIdParamsSchema,
@@ -56,6 +57,7 @@ const createContentBodySchema = z
     images: z.array(carouselImageSchema).max(20).optional(),
     scripts: z.array(scriptSchema).max(50).optional(),
     format: z.enum(["vertical", "horizontal"]).optional(),
+    duration: z.number().int().refine((v) => [15, 30, 45].includes(v), { message: "duration must be 15, 30 or 45" }).optional(),
     scheduledAt: z.string().datetime({ offset: true }).nullable().optional(),
   })
   .superRefine((v: any, ctx: any) => {
@@ -63,10 +65,12 @@ const createContentBodySchema = z
       if (!v.images || v.images.length === 0) ctx.addIssue({ code: "custom", path: ["images"], message: "images required for carousel" });
       if (v.scripts) ctx.addIssue({ code: "custom", path: ["scripts"], message: "scripts not allowed for carousel" });
       if (v.format) ctx.addIssue({ code: "custom", path: ["format"], message: "format not allowed for carousel" });
+      if (v.duration) ctx.addIssue({ code: "custom", path: ["duration"], message: "duration not allowed for carousel" });
     }
     if ((["talkinghead", "greenscreen"] as readonly string[]).includes(v.kind)) {
       if (!v.scripts || v.scripts.length === 0) ctx.addIssue({ code: "custom", path: ["scripts"], message: "scripts required for talkinghead/greenscreen" });
       if (!v.format) ctx.addIssue({ code: "custom", path: ["format"], message: "format required for talkinghead/greenscreen" });
+      if (!v.duration) ctx.addIssue({ code: "custom", path: ["duration"], message: "duration required for video types" });
       if (v.images) ctx.addIssue({ code: "custom", path: ["images"], message: "images not allowed for video types" });
     }
   });
@@ -94,7 +98,15 @@ export async function contentRoutes(app: FastifyInstance) {
       let where = and(eq(contents.userId, request.session!.user.id), eq(contents.companyId, request.params.companyId));
       if (q.kind) where = and(where, eq(contents.kind, q.kind)) as any;
       if (q.status) where = and(where, eq(contents.status, q.status)) as any;
-      const rows = await db.select().from(contents).where(where).orderBy(desc(contents.createdAt));
+      let rows: any[];
+      try {
+        rows = await db.select().from(contents).where(where).orderBy(desc(contents.createdAt));
+      } catch (e: any) {
+        if (String(e?.message ?? "").includes("no such column")) {
+          try { await db.run(`ALTER TABLE content ADD COLUMN duration TEXT` as any); } catch {}
+          rows = await db.select().from(contents).where(where).orderBy(desc(contents.createdAt));
+        } else throw e;
+      }
       return rows.map(parseContentRow) as any;
     },
   );
@@ -130,6 +142,7 @@ export async function contentRoutes(app: FastifyInstance) {
           scripts: data.scripts as any,
           mediaUrl: null,
           format: data.format as any,
+          duration: (data as any).duration as any,
           scheduledAt: data.scheduledAt as any,
         })
         .returning();
@@ -194,9 +207,11 @@ export async function contentRoutes(app: FastifyInstance) {
         images: patch.images !== undefined ? patch.images : existingParsed.images,
         scripts: patch.scripts !== undefined ? patch.scripts : existingParsed.scripts,
         format: patch.format !== undefined ? patch.format : existingParsed.format,
+        duration: patch.duration !== undefined ? patch.duration : (existingParsed as any).duration,
         scheduledAt: patch.scheduledAt !== undefined ? patch.scheduledAt : (existing as any).scheduledAt,
       };
       if (merged.scheduledAt === null) merged.scheduledAt = null;
+      if (merged.duration === null) delete merged.duration;
       // normalize nulls to undefined for zod
       if (merged.images === null) delete merged.images;
       if (merged.scripts === null) delete merged.scripts;
@@ -211,6 +226,7 @@ export async function contentRoutes(app: FastifyInstance) {
       if (patch.status !== undefined) serialized.status = patch.status;
       if (patch.companyId !== undefined) serialized.companyId = patch.companyId;
       if (patch.format !== undefined) serialized.format = patch.format;
+      if (patch.duration !== undefined) serialized.duration = String(patch.duration);
       if (patch.images !== undefined) serialized.images = patch.images ? JSON.stringify(patch.images) : null;
       if (patch.scripts !== undefined) serialized.scripts = patch.scripts ? JSON.stringify(patch.scripts) : null;
       if (patch.scheduledAt !== undefined) serialized.scheduledAt = patch.scheduledAt ? new Date(patch.scheduledAt).toISOString() : null;
@@ -245,6 +261,38 @@ export async function contentRoutes(app: FastifyInstance) {
     },
   );
 
+  // ---------- render video from content row ----------
+  r.post(
+    "/contents/:id/render",
+    {
+      preHandler: requireSession,
+      schema: {
+        params: contentIdParamsSchema,
+        response: { 200: contentResponseSchema, 400: errorResponseSchema, 404: errorResponseSchema, 502: errorResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      if (!request.session) return;
+      const id = request.params.id;
+      const userId = request.session.user.id;
+      const [row] = await db.select().from(contents).where(and(eq(contents.id, id), eq(contents.userId, userId)));
+      if (!row) return reply.status(404).send({ error: "Not found" } as any);
+      if (row.kind === "carousel") return reply.status(400).send({ error: "video not available for carousel" } as any);
+      try {
+        await renderVideoForContent(id, userId);
+      } catch (e: any) {
+        const msg = String(e?.message ?? "render failed");
+        if (msg.includes("not found")) return reply.status(404).send({ error: msg } as any);
+        if (msg.includes("Configure") || msg.includes("carousel") || msg.includes("no scripts") || msg.includes("unsupported kind")) return reply.status(400).send({ error: msg } as any);
+        request.log.warn({ err: e }, "render video failed");
+        return reply.status(502).send({ error: msg.slice(0, 2000) } as any);
+      }
+      const [fresh] = await db.select().from(contents).where(and(eq(contents.id, id), eq(contents.userId, userId)));
+      if (!fresh) return reply.status(404).send({ error: "Not found" } as any);
+      return parseContentRow(fresh as any) as any;
+    },
+  );
+
   // ---------- ideas (transient, no DB) ----------
 
   r.post(
@@ -264,8 +312,8 @@ export async function contentRoutes(app: FastifyInstance) {
       if (!company.persona) return reply.status(400).send({ error: "This brand has no persona yet — complete onboarding first." } as any);
 
       const { kind, count } = request.body as z.infer<typeof ideasBodySchema>;
-      // ponytail: task routing — carousel=image, video kinds=video
-      const task = kind === "carousel" ? "image" as const : kind ? "video" as const : "text" as const;
+      // ponytail: ideas are LLM text generation — kind only hints prompt, never routes model
+      const task = "text" as const;
       let model;
       try {
         model = await resolveUserModel(request.session!.user.id, task);
@@ -349,8 +397,10 @@ export async function contentRoutes(app: FastifyInstance) {
       const finalKind = (["carousel", "talkinghead", "greenscreen"] as const).includes(kind as any) ? kind : "talkinghead";
       const title = (body.title ?? idea.title).slice(0, 255);
       const selectedHook = body.selectedHook;
+      const duration = (body as any).duration as number | undefined;
 
-      const task = finalKind === "carousel" ? "image" as const : "video" as const;
+      // ponytail: script generation is LLM text — always use text provider
+      const task = "text" as const;
       let model;
       try {
         model = await resolveUserModel(request.session!.user.id, task);
@@ -417,7 +467,9 @@ export async function contentRoutes(app: FastifyInstance) {
           const format = parsed.format === "horizontal" ? "horizontal" : "vertical";
           const validatedScripts = z.array(scriptSchema).safeParse(scripts);
           if (!validatedScripts.success || validatedScripts.data.length === 0) throw new Error(validatedScripts.error?.issues[0]?.message || "no valid scripts");
-          full = { companyId: request.params.companyId, kind: finalKind, title: outTitle, scripts: validatedScripts.data, format };
+          const dur = duration ?? 15;
+          if (![15, 30, 45].includes(dur as number)) throw new Error("duration must be 15, 30 or 45");
+          full = { companyId: request.params.companyId, kind: finalKind, title: outTitle, scripts: validatedScripts.data, format, duration: dur };
         }
 
         const v = createContentSchema.safeParse(full);
@@ -435,6 +487,7 @@ export async function contentRoutes(app: FastifyInstance) {
             scripts: data.scripts as any,
             mediaUrl: null,
             format: data.format as any,
+            duration: (data as any).duration as any,
           })
           .returning();
         const parsedRow = parseContentRow(row as any) as any;

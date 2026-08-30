@@ -56,7 +56,8 @@ export default function CreateContentDialog({
   const company = companies.find((c) => c.id === selectedId) ?? companies[0] ?? null
 
   const [kind, setKind] = useState<ContentType | null>(null)
-  const [step, setStep] = useState<'type' | 'ideas'>('type')
+  const [duration, setDuration] = useState<15 | 30 | 45>(15)
+  const [step, setStep] = useState<'type' | 'duration' | 'ideas'>('type')
 
   const [ideas, setIdeas] = useState<Idea[] | null>(null)
   const [ideasLoading, setIdeasLoading] = useState(false)
@@ -71,6 +72,7 @@ export default function CreateContentDialog({
   useEffect(() => {
     if (!open) return
     setKind(null)
+    setDuration(15)
     setStep('type')
     setIdeas(null)
     setIdeasLoading(false)
@@ -101,8 +103,12 @@ export default function CreateContentDialog({
 
   const handlePickKind = (k: ContentType) => {
     setKind(k)
-    setStep('ideas')
-    void loadIdeas(k)
+    if (k === 'carousel') {
+      setStep('ideas')
+      void loadIdeas(k)
+    } else {
+      setStep('duration')
+    }
   }
 
   const handleGenerate = async () => {
@@ -114,6 +120,7 @@ export default function CreateContentDialog({
         idea: selectedIdea,
         selectedHook: selectedIdea.hooks[0],
         kind,
+        duration: kind === 'carousel' ? undefined : duration,
       })
       onCreate(toContentItem(row))
       onOpenChange(false)
@@ -128,7 +135,7 @@ export default function CreateContentDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={step === 'type' ? 'sm:max-w-2xl' : 'sm:max-w-xl'}>
+      <DialogContent className={step === 'type' ? 'sm:max-w-2xl' : step === 'duration' ? 'sm:max-w-md' : 'sm:max-w-xl'}>
         {step === 'type' ? (
           <>
             <DialogHeader>
@@ -172,6 +179,41 @@ export default function CreateContentDialog({
 
             <DialogFooter>
               <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+            </DialogFooter>
+          </>
+        ) : step === 'duration' ? (
+          <>
+            <DialogHeader>
+              <DialogTitle className="text-lg">Pick duration</DialogTitle>
+              <DialogDescription>How long should the video be? We’ll split it into 5s clips chained frame-to-frame.</DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-2" role="radiogroup" aria-label="Duration">
+              {[15, 30, 45].map((d) => {
+                const sel = duration === d
+                return (
+                  <button
+                    key={d}
+                    type="button"
+                    role="radio"
+                    aria-checked={sel}
+                    onClick={() => setDuration(d as 15 | 30 | 45)}
+                    className={cn(
+                      'flex items-center justify-between rounded-xl border p-3.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
+                      sel ? 'border-foreground bg-muted/60' : 'hover:bg-muted/40',
+                    )}
+                  >
+                    <div>
+                      <div className="text-sm font-semibold">{d}s</div>
+                      <div className="text-xs text-muted-foreground">{d / 5} clips · 5s each · last frame → next</div>
+                    </div>
+                    {sel && <span className="grid size-5 place-items-center rounded-full bg-foreground text-background"><Check className="size-3" /></span>}
+                  </button>
+                )
+              })}
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => setStep('type')}>Back</Button>
+              <Button onClick={() => { setStep('ideas'); if (kind) void loadIdeas(kind) }}>Continue</Button>
             </DialogFooter>
           </>
         ) : (

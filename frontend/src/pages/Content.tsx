@@ -36,6 +36,7 @@ function toContentItem(row: ContentRow): ContentItem {
     aiScore: 75,
     format: row.format ?? (row.kind === 'carousel' ? 'horizontal' : 'vertical'),
     mediaUrl: row.mediaUrl,
+    duration: row.duration ?? (row.kind === 'carousel' ? null : 15),
   }
 }
 
@@ -202,6 +203,10 @@ export default function ContentPage() {
         onOpenChange={(open) => !open && setDetailItem(null)}
         onDuplicate={handleDuplicate}
         onDelete={handleDelete}
+        onRendered={(updated) => {
+          setDetailItem(updated)
+          setItems((prev) => prev.map((x) => (x.id === updated.id ? updated : x)))
+        }}
       />
     </div>
   )
