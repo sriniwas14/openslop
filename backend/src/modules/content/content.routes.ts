@@ -6,6 +6,7 @@ import { db } from "../../lib/db";
 import { companies, contents } from "../../db/schema";
 import { requireSession } from "../../plugins/auth";
 import { resolveUserModel } from "../company/company.workflow";
+import { queueContentMedia } from "../media/media.service";
 import {
   carouselImageSchema,
   companyIdParamsSchema,
@@ -127,11 +128,14 @@ export async function contentRoutes(app: FastifyInstance) {
           status: data.status,
           images: data.images as any,
           scripts: data.scripts as any,
+          mediaUrl: null,
           format: data.format as any,
           scheduledAt: data.scheduledAt as any,
         })
         .returning();
-      return reply.status(201).send(parseContentRow(row as any) as any);
+      const parsedRow = parseContentRow(row as any) as any;
+      void queueContentMedia({ userId: request.session!.user.id, companyId: request.params.companyId, contentId: row.id, kind: row.kind, images: parsedRow.images, scripts: parsedRow.scripts, format: row.format as any });
+      return reply.status(201).send(parsedRow);
     },
   );
 
@@ -429,10 +433,13 @@ export async function contentRoutes(app: FastifyInstance) {
             status: data.status,
             images: data.images as any,
             scripts: data.scripts as any,
+            mediaUrl: null,
             format: data.format as any,
           })
           .returning();
-        return reply.status(201).send(parseContentRow(row as any) as any);
+        const parsedRow = parseContentRow(row as any) as any;
+        void queueContentMedia({ userId: request.session!.user.id, companyId: request.params.companyId, contentId: row.id, kind: row.kind, images: parsedRow.images, scripts: parsedRow.scripts, format: row.format as any });
+        return reply.status(201).send(parsedRow);
       } catch (e: any) {
         request.log.warn({ err: e }, "could not parse script JSON");
         return reply.status(502).send({ error: e?.message || "AI returned unusable script — try again" } as any);

@@ -1,15 +1,17 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Plus, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-import { STATUSES, type ContentItem, type ContentStatus, type ViewMode } from '@/components/content/data'
+import { CONTENT_TYPES, STATUSES, type ContentItem, type ContentStatus, type ViewMode } from '@/components/content/data'
 import { ViewSwitcher } from '@/components/content/primitives'
 import ListView from '@/components/content/ListView'
 import CalendarView from '@/components/content/CalendarView'
 import CardsView from '@/components/content/CardsView'
 import CreateContentDialog from '@/components/content/CreateContentDialog'
 import ContentDetailDialog from '@/components/content/ContentDetailDialog'
+import { useCompany } from '@/context/CompanyContext'
+import { listContent, type ContentRow } from '@/services/content'
 
 const VIEW_STORAGE_KEY = 'geoalt.content.view'
 
@@ -20,6 +22,23 @@ function loadView(): ViewMode {
 
 type StatusFilter = ContentStatus | 'all'
 
+function toContentItem(row: ContentRow): ContentItem {
+  const meta = CONTENT_TYPES[row.kind]
+  const summary = row.scripts?.[0]?.prompt?.slice(0, 220) ?? row.images?.[0]?.text?.slice(0, 220) ?? row.title
+  return {
+    id: row.id,
+    title: row.title,
+    summary,
+    type: row.kind,
+    platforms: meta?.platforms?.slice(0, 2) ?? ['instagram'],
+    status: row.status === 'published' ? 'published' : 'draft',
+    scheduledAt: row.scheduledAt,
+    aiScore: 75,
+    format: row.format ?? (row.kind === 'carousel' ? 'horizontal' : 'vertical'),
+    mediaUrl: row.mediaUrl,
+  }
+}
+
 const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'draft', label: STATUSES.draft.label },
@@ -29,6 +48,7 @@ const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
 ]
 
 export default function ContentPage() {
+  const { selectedId } = useCompany()
   const [items, setItems] = useState<ContentItem[]>([])
   const [view, setViewState] = useState<ViewMode>(loadView)
   const [search, setSearch] = useState('')
@@ -36,6 +56,20 @@ export default function ContentPage() {
   const [createOpen, setCreateOpen] = useState(false)
   const [createDate, setCreateDate] = useState<string | null>(null)
   const [detailItem, setDetailItem] = useState<ContentItem | null>(null)
+
+  useEffect(() => {
+    let active = true
+    if (!selectedId) { setItems([]); return () => { active = false } }
+    const load = async () => {
+      try {
+        const rows = await listContent(selectedId)
+        if (active) setItems(rows.map(toContentItem))
+      } catch { if (active) setItems([]) }
+    }
+    void load()
+    const timer = window.setInterval(() => void load(), 8000)
+    return () => { active = false; window.clearInterval(timer) }
+  }, [selectedId])
 
   const setView = (v: ViewMode) => {
     setViewState(v)

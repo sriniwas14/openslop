@@ -38,8 +38,15 @@ export default function ContentDetailDialog({
                   <AiScorePill score={item.aiScore} className="ml-auto" />
                 </div>
                 <DialogTitle className="text-lg leading-snug">{item.title}</DialogTitle>
-                <DialogDescription className="text-sm leading-relaxed">{item.summary}</DialogDescription>
+              <DialogDescription className="text-sm leading-relaxed">{item.summary}</DialogDescription>
               </DialogHeader>
+
+              {item.mediaUrl && (
+                <div className="overflow-hidden rounded-lg border bg-muted/20">
+                  {item.type === 'carousel' ? <img src={item.mediaUrl} alt="Generated content" className="max-h-64 w-full object-contain" /> : <video src={item.mediaUrl} controls className="max-h-64 w-full" />}
+                  <a href={item.mediaUrl} target="_blank" rel="noreferrer" className="block px-3 py-2 text-xs text-muted-foreground underline">Open generated media</a>
+                </div>
+              )}
 
               <dl className="grid grid-cols-2 gap-x-4 gap-y-3 rounded-xl border bg-muted/30 p-3.5 text-sm">
                 <div className="grid gap-0.5">

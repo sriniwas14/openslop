@@ -7,8 +7,15 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOllama } from "ollama-ai-provider-v2";
+import { DISCOVERY_ONLY_PROVIDERS, type AiProvider } from "../../lib/mastra";
 
 export type TaskKind = "video" | "image" | "text" | "default";
+
+function assertChatProvider(provider: string) {
+  if (DISCOVERY_ONLY_PROVIDERS.has(provider as AiProvider)) {
+    throw new Error(`${provider} is configured for model discovery only; media generation adapters are not enabled yet`);
+  }
+}
 
 // ponytail: strict DB-only — no env fallback; provider-aware routing so openrouter key hits openrouter, not api.openai.com
 // task-aware: uses ai_preferences fallback to isDefault/first
@@ -25,6 +32,7 @@ export async function resolveUserModel(userId: string, task: TaskKind = "default
         const [row] = await db.select().from(aiConfigs).where(and(eq(aiConfigs.id, pair.id), eq(aiConfigs.userId, userId)));
         if (row) {
           const provider = row.provider as string;
+          assertChatProvider(provider);
           const model = pair.model;
           const apiKey = row.apiKey ?? "not-set";
           if (provider === "ollama") return createOllama(row.baseUrl ? { baseURL: row.baseUrl } : undefined)(model);
@@ -45,7 +53,7 @@ export async function resolveUserModel(userId: string, task: TaskKind = "default
         throw new Error(`Configure ${task} provider + model in Settings → AI Providers (both required)`);
       }
     } catch (e: any) {
-      if (e?.message?.includes("Configure")) throw e;
+      if (e?.message?.includes("Configure") || e?.message?.includes("media generation adapters")) throw e;
       // table missing before migration — fall through
     }
   }
@@ -61,6 +69,7 @@ export async function resolveUserModel(userId: string, task: TaskKind = "default
   }
   if (!cfg?.model) throw new Error("No AI provider configured — add one in Settings → AI Providers and set as Default");
   const provider = cfg.provider as string;
+  assertChatProvider(provider);
   const model = cfg.model!;
   const apiKey = cfg.apiKey ?? "not-set";
   if (provider === "ollama") {

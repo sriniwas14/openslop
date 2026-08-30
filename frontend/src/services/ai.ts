@@ -1,12 +1,28 @@
-export type AiProvider = "openai" | "anthropic" | "google" | "xai" | "openrouter" | "ollama" | "custom"
-export const AI_PROVIDERS: AiProvider[] = ["openai","anthropic","google","xai","openrouter","ollama","custom"]
+export type AiProvider = "openai" | "anthropic" | "google" | "vertex" | "xai" | "openrouter" | "runway" | "fal" | "luma" | "ollama" | "custom"
+export const AI_PROVIDERS: AiProvider[] = ["openai","anthropic","google","vertex","xai","openrouter","runway","fal","luma","ollama","custom"]
+export const AI_PROVIDER_LABELS: Record<AiProvider, string> = {
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  google: 'Google AI',
+  vertex: 'Google Vertex AI',
+  xai: 'xAI',
+  openrouter: 'OpenRouter',
+  runway: 'Runway',
+  fal: 'fal.ai',
+  luma: 'Luma',
+  ollama: 'Ollama',
+  custom: 'Custom OpenAI-compatible',
+}
 
 export type AiConfig = {
   id: string
   userId: string
   provider: string
   apiKeyMasked: string | null
+  serviceAccountConfigured: boolean
   baseUrl: string | null
+  projectId: string | null
+  location: string | null
   model: string | null
   name: string | null
   isDefault: boolean
@@ -26,7 +42,7 @@ export function listAiConfigs(): Promise<AiConfig[]> {
   return fetch('/ai/configs', { credentials: 'include' }).then(handle<AiConfig[]>)
 }
 
-export function createAiConfig(body: { provider: AiProvider; apiKey?: string; baseUrl?: string; model?: string; name?: string; isDefault?: boolean }): Promise<AiConfig> {
+export function createAiConfig(body: { provider: AiProvider; apiKey?: string; serviceAccountJson?: string; baseUrl?: string; projectId?: string; location?: string; model?: string; name?: string; isDefault?: boolean }): Promise<AiConfig> {
   return fetch('/ai/configs', {
     method: 'POST',
     credentials: 'include',
@@ -35,7 +51,7 @@ export function createAiConfig(body: { provider: AiProvider; apiKey?: string; ba
   }).then(handle<AiConfig>)
 }
 
-export function updateAiConfig(id: string, body: Partial<{ provider: AiProvider; apiKey: string; baseUrl: string; model: string; name: string; isDefault: boolean }>): Promise<AiConfig> {
+export function updateAiConfig(id: string, body: Partial<{ provider: AiProvider; apiKey: string; serviceAccountJson: string; baseUrl: string; projectId: string; location: string; model: string; name: string; isDefault: boolean }>): Promise<AiConfig> {
   return fetch(`/ai/configs/${id}`, {
     method: 'PATCH',
     credentials: 'include',
@@ -77,11 +93,11 @@ export function updateAiPreferences(body: Partial<AiPreferences>): Promise<AiPre
 export type OnboardingProgress = { step: string; data: string | null; updatedAt: string }
 
 export function getOnboardingProgress(): Promise<OnboardingProgress> {
-  return fetch('/onboarding/progress', { credentials: 'include' }).then(handle<OnboardingProgress>)
+  return fetch('/ai/onboarding/progress', { credentials: 'include' }).then(handle<OnboardingProgress>)
 }
 
 export function saveOnboardingProgress(body: { step: string | number; data?: Record<string, unknown> | null }): Promise<OnboardingProgress> {
-  return fetch('/onboarding/progress', {
+  return fetch('/ai/onboarding/progress', {
     method: 'PUT',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
@@ -90,9 +106,35 @@ export function saveOnboardingProgress(body: { step: string | number; data?: Rec
 }
 
 export type ModelOption = { id: string; name: string }
+export type ModelTask = 'video' | 'image' | 'text'
 
-export function listModels(params: { provider: AiProvider; configId?: string; apiKey?: string; baseUrl?: string; q?: string }): Promise<ModelOption[]> {
+export type MediaJob = {
+  id: string
+  userId: string
+  companyId: string
+  contentId: string | null
+  provider: string
+  model: string
+  task: 'image' | 'video'
+  prompt: string
+  inputUrl: string | null
+  outputIndex: string | null
+  providerTaskId: string | null
+  status: 'queued' | 'processing' | 'completed' | 'failed'
+  outputUrl: string | null
+  error: string | null
+  attempts: string
+  createdAt: string
+  updatedAt: string
+}
+
+export function listMediaJobs(contentId: string): Promise<MediaJob[]> {
+  return fetch(`/contents/${contentId}/media-jobs`, { credentials: 'include' }).then(handle<MediaJob[]>)
+}
+
+export function listModels(params: { provider: AiProvider; task?: ModelTask; configId?: string; apiKey?: string; baseUrl?: string; q?: string }): Promise<ModelOption[]> {
   const sp = new URLSearchParams({ provider: params.provider })
+  if (params.task) sp.set('task', params.task)
   if (params.configId) sp.set('configId', params.configId)
   if (params.apiKey) sp.set('apiKey', params.apiKey)
   if (params.baseUrl) sp.set('baseUrl', params.baseUrl)

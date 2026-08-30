@@ -33,6 +33,26 @@ export function fetchIdeas(
   }).then(handle<{ ideas: Idea[] }>)
 }
 
+export type ContentRow = {
+  id: string
+  userId: string
+  companyId: string
+  kind: 'carousel' | 'talkinghead' | 'greenscreen'
+  title: string
+  status: string
+  images: { url: string; text: string; font?: string; background?: string; color?: string }[] | null
+  scripts: { type: 'aroll' | 'broll'; prompt: string }[] | null
+  mediaUrl: string | null
+  format: 'vertical' | 'horizontal' | null
+  scheduledAt: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export function listContent(companyId: string): Promise<ContentRow[]> {
+  return fetch(`/companies/${companyId}/contents`, { credentials: 'include' }).then(handle<ContentRow[]>)
+}
+
 export function generateFromIdea(
   companyId: string,
   body: { idea: Idea; selectedHook: string; kind?: string; title?: string },

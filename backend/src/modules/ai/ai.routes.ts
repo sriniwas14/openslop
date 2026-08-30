@@ -34,7 +34,10 @@ function toResponse(row: typeof aiConfigs.$inferSelect) {
     userId: row.userId,
     provider: row.provider,
     apiKeyMasked: maskKey(row.apiKey),
+    serviceAccountConfigured: Boolean(row.serviceAccountJson),
     baseUrl: row.baseUrl,
+    projectId: row.projectId,
+    location: row.location,
     model: row.model,
     name: row.name,
     isDefault: row.isDefault === "1",
@@ -42,6 +45,8 @@ function toResponse(row: typeof aiConfigs.$inferSelect) {
     updatedAt: row.updatedAt,
   };
 }
+
+type ModelTask = "video" | "image" | "text";
 
 const CURATED: Record<string, string[]> = {
   anthropic: [
@@ -71,6 +76,31 @@ const CURATED: Record<string, string[]> = {
   ollama: ["llama3.1", "llama3", "mistral", "qwen2", "gemma2", "phi3"],
 };
 
+const CURATED_BY_TASK: Record<string, Partial<Record<ModelTask, string[]>>> = {
+  runway: {
+    video: ["wan3", "seedance2_5", "grok_imagine_1_5", "seedance2", "seedance2_fast", "seedance2_mini", "hailuo3", "aleph2", "gen4.5", "gen4_turbo", "act_two", "veo3.1", "veo3.1_fast", "happyhorse_1_0", "gemini_omni_flash"],
+    image: ["muse_image", "grok_imagine_image_2", "seedream5_pro", "seedream5_lite", "gen4_image", "gen4_image_turbo", "gemini_image3_pro", "gemini_image3.1_flash", "gpt_image_2", "gemini_2.5_flash"],
+  },
+  vertex: {
+    text: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"],
+    image: ["imagen-4.0-generate-001", "imagen-4.0-fast-generate-001", "imagen-3.0-generate-002"],
+    video: ["veo-3.0-generate-001", "veo-2.0-generate-001"],
+  },
+  fal: {
+    image: [],
+    video: [],
+  },
+  luma: {
+    image: ["photon-1", "photon-flash-1"],
+    video: ["ray-2", "ray-flash-2"],
+  },
+};
+
+function curatedModels(provider: string, task: ModelTask): { id: string; name: string }[] {
+  const ids = CURATED_BY_TASK[provider]?.[task] ?? CURATED[provider] ?? [];
+  return ids.map((id) => ({ id, name: id }));
+}
+
 // ponytail: 5m in-mem cache for model lists
 const modelCache = new Map<string, { at: number; data: { id: string; name: string }[] }>();
 
@@ -95,8 +125,8 @@ function extractJson(text: string): any {
   return JSON.parse(raw.slice(start, end + 1));
 }
 
-async function fetchOpenAiModels(baseUrl: string, apiKey: string): Promise<{ id: string; name: string }[]> {
-  const url = `${baseUrl.replace(/\/$/, "")}/models`;
+async function fetchOpenAiModels(baseUrl: string, apiKey: string, path = "/models"): Promise<{ id: string; name: string }[]> {
+  const url = `${baseUrl.replace(/\/$/, "")}${path}`;
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 5000);
   try {
@@ -107,10 +137,46 @@ async function fetchOpenAiModels(baseUrl: string, apiKey: string): Promise<{ id:
     if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
     const json: any = await res.json();
     const list = json.data ?? json.models ?? [];
-    return list.map((m: any) => ({ id: m.id ?? m.name, name: m.id ?? m.name })).filter((m: any) => m.id);
+    return list
+      .map((m: any) => ({ id: m.id ?? m.name, name: m.name ?? m.id }))
+      .filter((m: any) => m.id);
   } finally {
     clearTimeout(t);
   }
+}
+
+async function fetchOpenRouterModels(baseUrl: string, apiKey: string, task: ModelTask): Promise<{ id: string; name: string }[]> {
+  const path = task === "video" ? "/videos/models" : task === "image" ? "/images/models" : "/models";
+  return fetchOpenAiModels(baseUrl, apiKey, path);
+}
+
+async function fetchFalModels(baseUrl: string, apiKey: string, task: ModelTask): Promise<{ id: string; name: string }[]> {
+  const categories = task === "image"
+    ? ["text-to-image", "image-to-image"]
+    : task === "video"
+      ? ["text-to-video", "image-to-video"]
+      : [];
+  if (!categories.length) return [];
+
+  const results = await Promise.all(categories.map(async (category) => {
+    const url = `${baseUrl.replace(/\/$/, "")}/models?limit=50&status=active&category=${encodeURIComponent(category)}`;
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), 5000);
+    try {
+      const res = await fetch(url, { headers: { Authorization: `Key ${apiKey}` }, signal: ctrl.signal });
+      if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+      const json: any = await res.json();
+      return (json.models ?? []).map((m: any) => ({
+        id: m.endpoint_id ?? m.id,
+        name: m.metadata?.display_name ?? m.endpoint_id ?? m.id,
+      })).filter((m: any) => m.id);
+    } finally {
+      clearTimeout(t);
+    }
+  }));
+
+  const seen = new Set<string>();
+  return results.flat().filter((m) => !seen.has(m.id) && seen.add(m.id));
 }
 
 async function fetchOllamaModels(baseUrl: string): Promise<{ id: string; name: string }[]> {
@@ -157,7 +223,10 @@ export async function aiRoutes(app: FastifyInstance) {
           userId: request.session!.user.id,
           provider: body.provider,
           apiKey: body.apiKey || null,
+          serviceAccountJson: body.serviceAccountJson || null,
           baseUrl: body.baseUrl || null,
+          projectId: body.projectId || null,
+          location: body.location || null,
           model: body.model || null,
           name: body.name || null,
           isDefault,
@@ -178,7 +247,10 @@ export async function aiRoutes(app: FastifyInstance) {
       const patch: any = { updatedAt: new Date().toISOString() };
       if (body.provider !== undefined) patch.provider = body.provider;
       if (body.apiKey !== undefined) patch.apiKey = body.apiKey || null;
+      if (body.serviceAccountJson !== undefined) patch.serviceAccountJson = body.serviceAccountJson || null;
       if (body.baseUrl !== undefined) patch.baseUrl = body.baseUrl || null;
+      if (body.projectId !== undefined) patch.projectId = body.projectId || null;
+      if (body.location !== undefined) patch.location = body.location || null;
       if (body.model !== undefined) patch.model = body.model || null;
       if (body.name !== undefined) patch.name = body.name || null;
       if (body.isDefault !== undefined) {
@@ -246,7 +318,7 @@ export async function aiRoutes(app: FastifyInstance) {
       schema: { querystring: modelQuerySchema, response: { 200: z.array(z.object({ id: z.string(), name: z.string() })), 400: errorResponseSchema, 401: errorResponseSchema } },
     },
     async (request, reply) => {
-      const { provider, configId, apiKey: qApiKey, baseUrl: qBaseUrl, q } = request.query as any;
+      const { provider, task = "text", configId, apiKey: qApiKey, baseUrl: qBaseUrl, q } = request.query as any;
       if (!AI_PROVIDERS.includes(provider)) return reply.status(400).send({ error: "unknown provider" } as any);
 
       // curated for anthropic/google — static, no DB needed
@@ -296,9 +368,9 @@ export async function aiRoutes(app: FastifyInstance) {
         if (qApiKey || (provider === "ollama" && qBaseUrl)) {
           apiKey = (qApiKey as string) || null;
           baseUrl = (qBaseUrl as string) || null;
-        } else if (CURATED[provider]) {
+        } else if (curatedModels(provider, task).length) {
           // no key yet — show curated fallback so dropdown is not empty
-          let list = CURATED[provider].map((id) => ({ id, name: id }));
+          let list = curatedModels(provider, task);
           if (q) list = list.filter((m) => m.id.toLowerCase().includes(q.toLowerCase()));
           return list.slice(0, 50);
         } else {
@@ -307,7 +379,7 @@ export async function aiRoutes(app: FastifyInstance) {
         }
       }
 
-      const cacheKey = `${provider}|${apiKey ?? ""}|${baseUrl ?? ""}|${q ?? ""}`;
+      const cacheKey = `${provider}|${task}|${apiKey ?? ""}|${baseUrl ?? ""}|${q ?? ""}`;
       const cached = modelCache.get(cacheKey);
       if (cached && Date.now() - cached.at < 5 * 60 * 1000) return cached.data;
 
@@ -315,11 +387,11 @@ export async function aiRoutes(app: FastifyInstance) {
         let list: { id: string; name: string }[] = [];
         if (provider === "ollama") {
           list = await fetchOllamaModels(baseUrl || "http://localhost:11434");
-        } else if (provider === "openai" || provider === "openrouter" || provider === "custom" || provider === "xai") {
+        } else if (provider === "openai" || provider === "openrouter" || provider === "custom" || provider === "xai" || provider === "runway" || provider === "vertex" || provider === "fal" || provider === "luma") {
           if (!apiKey) {
             // ponytail: no key — show curated if available so dropdown not empty
-            if (CURATED[provider]) {
-              let list = CURATED[provider].map((id) => ({ id, name: id }));
+            if (curatedModels(provider, task).length) {
+              let list = curatedModels(provider, task);
               if (q) list = list.filter((m) => m.id.toLowerCase().includes(q.toLowerCase()));
               const out = list.slice(0, 50);
               modelCache.set(cacheKey, { at: Date.now(), data: out });
@@ -327,16 +399,24 @@ export async function aiRoutes(app: FastifyInstance) {
             }
             return [];
           }
-          const defaultBase =
-            provider === "openai"
-              ? "https://api.openai.com/v1"
-              : provider === "openrouter"
-                ? "https://openrouter.ai/api/v1"
-                : provider === "xai"
-                  ? "https://api.x.ai/v1"
-                  : baseUrl || "https://api.openai.com/v1";
-          const urlBase = baseUrl || defaultBase;
-          list = await fetchOpenAiModels(urlBase, apiKey);
+          if (provider === "runway" || provider === "vertex" || provider === "luma") {
+            list = curatedModels(provider, task);
+          } else if (provider === "fal") {
+            list = await fetchFalModels(baseUrl || "https://api.fal.ai/v1", apiKey, task);
+          } else {
+            const defaultBase =
+              provider === "openai"
+                ? "https://api.openai.com/v1"
+                : provider === "openrouter"
+                  ? "https://openrouter.ai/api/v1"
+                  : provider === "xai"
+                    ? "https://api.x.ai/v1"
+                    : baseUrl || "https://api.openai.com/v1";
+            const urlBase = baseUrl || defaultBase;
+            list = provider === "openrouter"
+              ? await fetchOpenRouterModels(urlBase, apiKey, task)
+              : await fetchOpenAiModels(urlBase, apiKey);
+          }
         }
         if (q) list = list.filter((m) => m.id.toLowerCase().includes(q.toLowerCase()));
         const out = list.slice(0, 50);
@@ -345,8 +425,8 @@ export async function aiRoutes(app: FastifyInstance) {
       } catch (e: any) {
         request.log.warn({ err: e, provider }, "model fetch failed");
         // ponytail: on fetch fail, fall back to curated if exists, else empty
-        if (CURATED[provider]) {
-          let list = CURATED[provider].map((id) => ({ id, name: id }));
+        if (curatedModels(provider, task).length) {
+          let list = curatedModels(provider, task);
           if (q) list = list.filter((m) => m.id.toLowerCase().includes(q.toLowerCase()));
           return list.slice(0, 50);
         }
@@ -493,33 +573,38 @@ export async function aiRoutes(app: FastifyInstance) {
     },
   );
 
-  r.put(
-    "/onboarding/progress",
-    { preHandler: requireSession, schema: { body: onboardingProgressSchema, response: { 200: onboardingProgressResponseSchema, 500: errorResponseSchema } } },
-    async (request, reply) => {
-      const body = request.body as any;
-      const step = String(body.step ?? "1");
-      const data = body.data ? JSON.stringify(body.data) : null;
-      try {
-        const { onboardingProgress } = await import("../../db/schema");
-        const [existing] = await db.select().from(onboardingProgress).where(eq(onboardingProgress.userId, request.session!.user.id));
-        if (!existing) {
-          const [row] = await db.insert(onboardingProgress).values({ userId: request.session!.user.id, step, data, updatedAt: new Date().toISOString() } as any).returning();
-          return { step: row.step, data: row.data, updatedAt: row.updatedAt } as any;
-        } else {
-          const [row] = await db.update(onboardingProgress).set({ step, data, updatedAt: new Date().toISOString() } as any).where(eq(onboardingProgress.userId, request.session!.user.id)).returning();
-          return { step: row.step, data: row.data, updatedAt: row.updatedAt } as any;
-        }
-      } catch {
-        try {
-          await db.run(`CREATE TABLE IF NOT EXISTS onboarding_progress (user_id TEXT PRIMARY KEY, step TEXT NOT NULL DEFAULT '1', data TEXT, updated_at TEXT NOT NULL)` as any);
-          const { onboardingProgress } = await import("../../db/schema");
-          const [row] = await db.insert(onboardingProgress).values({ userId: request.session!.user.id, step, data, updatedAt: new Date().toISOString() } as any).returning();
-          return { step: row.step, data: row.data, updatedAt: row.updatedAt } as any;
-        } catch { return reply.status(500).send({ error: "failed" } as any); }
+  const saveOnboardingProgress = async (request: any, reply: any) => {
+    const body = request.body as any;
+    const step = String(body.step ?? "1");
+    const data = body.data ? JSON.stringify(body.data) : null;
+    try {
+      const { onboardingProgress } = await import("../../db/schema");
+      const [existing] = await db.select().from(onboardingProgress).where(eq(onboardingProgress.userId, request.session!.user.id));
+      if (!existing) {
+        const [row] = await db.insert(onboardingProgress).values({ userId: request.session!.user.id, step, data, updatedAt: new Date().toISOString() } as any).returning();
+        return { step: row.step, data: row.data, updatedAt: row.updatedAt } as any;
+      } else {
+        const [row] = await db.update(onboardingProgress).set({ step, data, updatedAt: new Date().toISOString() } as any).where(eq(onboardingProgress.userId, request.session!.user.id)).returning();
+        return { step: row.step, data: row.data, updatedAt: row.updatedAt } as any;
       }
-    },
-  );
+    } catch {
+      try {
+        await db.run(`CREATE TABLE IF NOT EXISTS onboarding_progress (user_id TEXT PRIMARY KEY, step TEXT NOT NULL DEFAULT '1', data TEXT, updated_at TEXT NOT NULL)` as any);
+        const { onboardingProgress } = await import("../../db/schema");
+        const [row] = await db.insert(onboardingProgress).values({ userId: request.session!.user.id, step, data, updatedAt: new Date().toISOString() } as any).returning();
+        return { step: row.step, data: row.data, updatedAt: row.updatedAt } as any;
+      } catch { return reply.status(500).send({ error: "failed" } as any); }
+    }
+  };
+
+  const onboardingProgressPutOptions = {
+    preHandler: requireSession,
+    schema: { body: onboardingProgressSchema, response: { 200: onboardingProgressResponseSchema, 500: errorResponseSchema } },
+  };
+
+  // Keep the legacy path while exposing the same /ai namespace used by the frontend proxy.
+  r.put("/ai/onboarding/progress", onboardingProgressPutOptions, saveOnboardingProgress);
+  r.put("/onboarding/progress", onboardingProgressPutOptions, saveOnboardingProgress);
 
   // ponytail: persona-driven content generation — user only picks a content type; the brand persona drives everything
   r.post(

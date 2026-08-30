@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useSession, signUp, signIn } from '@/services/auth'
-import { AI_PROVIDERS, type AiConfig, type AiPreferences, type AiProvider, createAiConfig, getAiPreferences, getOnboardingProgress, listAiConfigs, saveOnboardingProgress, updateAiPreferences } from '@/services/ai'
+import { AI_PROVIDERS, AI_PROVIDER_LABELS, type AiConfig, type AiPreferences, type AiProvider, createAiConfig, getAiPreferences, getOnboardingProgress, listAiConfigs, saveOnboardingProgress, updateAiPreferences } from '@/services/ai'
 import { createCompanySSE, listCompanies } from '@/services/companies'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -30,7 +30,10 @@ export default function Onboarding() {
   const [prefs, setPrefs] = useState<AiPreferences>({ videoConfigId: null, videoModel: null, imageConfigId: null, imageModel: null, textConfigId: null, textModel: null })
   const [provider, setProvider] = useState<AiProvider>('openrouter')
   const [apiKey, setApiKey] = useState('')
+  const [serviceAccountJson, setServiceAccountJson] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
+  const [projectId, setProjectId] = useState('')
+  const [location, setLocation] = useState('')
   const [aiName, setAiName] = useState('')
   const [aiError, setAiError] = useState<string | null>(null)
   const [aiLoading, setAiLoading] = useState(false)
@@ -45,6 +48,7 @@ export default function Onboarding() {
   const [companyLoading, setCompanyLoading] = useState(false)
 
   const showBaseUrl = provider === 'ollama' || provider === 'custom'
+  const showVertexSettings = provider === 'vertex'
   const [resolving, setResolving] = useState(false)
 
   const getCfg = (id: string | null) => configs.find((c) => c.id === id) ?? null
@@ -149,8 +153,8 @@ export default function Onboarding() {
     if (!provider) { setAiError('Select provider'); return }
     setProviderSaving(true)
     try {
-      const c = await createAiConfig({ provider, apiKey: apiKey || undefined, baseUrl: baseUrl || undefined, name: aiName || undefined, isDefault: configs.length===0 })
-      setApiKey(''); setBaseUrl(''); setAiName('')
+      const c = await createAiConfig({ provider, apiKey: apiKey || undefined, serviceAccountJson: serviceAccountJson || undefined, baseUrl: baseUrl || undefined, projectId: projectId || undefined, location: location || undefined, name: aiName || undefined, isDefault: configs.length===0 })
+      setApiKey(''); setServiceAccountJson(''); setBaseUrl(''); setProjectId(''); setLocation(''); setAiName('')
       setProviderDialogOpen(false)
       await refreshConfigsAndPrefs()
       void saveProgress(2, { lastAddedConfigId: c.id })
@@ -275,7 +279,7 @@ export default function Onboarding() {
                     {configs.map((c) => (
                       <div key={c.id} className="flex items-center justify-between rounded-md border px-3 py-2">
                         <div className="min-w-0">
-                          <div className="flex items-center gap-2"><span className="text-sm font-medium truncate">{c.name || c.provider}</span><span className="rounded bg-muted px-1.5 py-0.5 text-xs">{c.provider}</span>{c.isDefault && <span className="rounded bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">default</span>}</div>
+                          <div className="flex items-center gap-2"><span className="text-sm font-medium truncate">{c.name || AI_PROVIDER_LABELS[c.provider as AiProvider] || c.provider}</span><span className="rounded bg-muted px-1.5 py-0.5 text-xs">{AI_PROVIDER_LABELS[c.provider as AiProvider] || c.provider}</span>{c.isDefault && <span className="rounded bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">default</span>}</div>
                           <div className="truncate text-xs text-muted-foreground">{c.baseUrl ?? 'no baseUrl'} · {c.apiKeyMasked ?? 'no key'}</div>
                         </div>
                       </div>
@@ -312,7 +316,7 @@ export default function Onboarding() {
                         </div>
                         <div className="grid gap-1.5">
                           <span className="text-xs text-muted-foreground">Model</span>
-                          <ModelSelector provider={providerForModel} configId={cfgId ?? undefined} value={modelVal} onChange={async (v) => {
+                          <ModelSelector provider={providerForModel} task={task} configId={cfgId ?? undefined} value={modelVal} onChange={async (v) => {
                             const key = task==="video" ? "videoModel" : task==="image" ? "imageModel" : "textModel"
                             const next = { ...prefs, [key]: v || null } as AiPreferences
                             setPrefs(next)
@@ -337,9 +341,14 @@ export default function Onboarding() {
                     <DialogDescription>Credentials only — model is chosen per task above.</DialogDescription>
                   </DialogHeader>
                   <form onSubmit={addProviderInOnboarding} className="grid gap-4">
-                    <div className="grid gap-2"><Label>Provider</Label><select value={provider} onChange={(e) => setProvider(e.target.value as AiProvider)} className="h-9 rounded-md border bg-transparent px-3 text-sm">{AI_PROVIDERS.map((p) => <option key={p} value={p}>{p}</option>)}</select></div>
+                    <div className="grid gap-2"><Label>Provider</Label><select value={provider} onChange={(e) => setProvider(e.target.value as AiProvider)} className="h-9 rounded-md border bg-transparent px-3 text-sm">{AI_PROVIDERS.map((p) => <option key={p} value={p}>{AI_PROVIDER_LABELS[p]}</option>)}</select></div>
                     <div className="grid gap-2"><Label htmlFor="ob-ainame">Label (optional)</Label><Input id="ob-ainame" value={aiName} onChange={(e) => setAiName(e.target.value)} placeholder="My OpenRouter" maxLength={255} /></div>
-                    <div className="grid gap-2"><Label htmlFor="ob-key">API Key</Label><Input id="ob-key" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." />{provider === 'ollama' && <p className="text-xs text-muted-foreground">Ollama usually needs no key.</p>}</div>
+                    {provider !== 'vertex' && <div className="grid gap-2"><Label htmlFor="ob-key">API Key</Label><Input id="ob-key" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." />{provider === 'ollama' && <p className="text-xs text-muted-foreground">Ollama usually needs no key.</p>}{provider === 'fal' && <p className="text-xs text-muted-foreground">Use a fal.ai API key.</p>}</div>}
+                    {showVertexSettings && <>
+                      <div className="grid gap-2"><Label htmlFor="ob-service-account">Google service-account JSON</Label><textarea id="ob-service-account" value={serviceAccountJson} onChange={(e) => setServiceAccountJson(e.target.value)} placeholder='{"client_email":"...","private_key":"..."}' className="min-h-28 rounded-md border bg-transparent px-3 py-2 font-mono text-xs" required /></div>
+                      <div className="grid gap-2"><Label htmlFor="ob-project">Google Cloud project ID</Label><Input id="ob-project" value={projectId} onChange={(e) => setProjectId(e.target.value)} placeholder="my-gcp-project" required /></div>
+                      <div className="grid gap-2"><Label htmlFor="ob-location">Vertex location</Label><Input id="ob-location" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="us-central1" required /></div>
+                    </>}
                     {showBaseUrl && <div className="grid gap-2"><Label htmlFor="ob-base">Base URL</Label><Input id="ob-base" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={provider === 'ollama' ? 'http://localhost:11434' : 'https://api.example.com/v1'} /></div>}
                     <DialogFooter>
                       <Button type="button" variant="ghost" onClick={() => setProviderDialogOpen(false)}>Cancel</Button>

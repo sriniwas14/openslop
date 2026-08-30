@@ -3,10 +3,11 @@ import { Check, ChevronsUpDown, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { listModels, type AiProvider } from '@/services/ai'
+import { listModels, type AiProvider, type ModelTask } from '@/services/ai'
 
 type Props = {
   provider: AiProvider
+  task: ModelTask
   configId?: string
   apiKey?: string
   baseUrl?: string
@@ -15,7 +16,7 @@ type Props = {
   disabled?: boolean
 }
 
-export default function ModelSelector({ provider, configId, apiKey, baseUrl, value, onChange, disabled }: Props) {
+export default function ModelSelector({ provider, task, configId, apiKey, baseUrl, value, onChange, disabled }: Props) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const [models, setModels] = useState<{ id: string; name: string }[]>([])
@@ -25,7 +26,7 @@ export default function ModelSelector({ provider, configId, apiKey, baseUrl, val
     if (!open) return
     let cancelled = false
     setLoading(true)
-    listModels({ provider, configId, apiKey, baseUrl, q: q || undefined })
+    listModels({ provider, task, configId, apiKey, baseUrl, q: q || undefined })
       .then((data) => {
         if (!cancelled) setModels(data)
       })
@@ -36,7 +37,7 @@ export default function ModelSelector({ provider, configId, apiKey, baseUrl, val
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [provider, configId, apiKey, baseUrl, q, open])
+  }, [provider, task, configId, apiKey, baseUrl, q, open])
 
   // ponytail: show value even if not in list (custom)
   const display = value || 'Select model'

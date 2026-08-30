@@ -9,11 +9,17 @@ export const AI_PROVIDERS = [
   "google",
   "xai",
   "openrouter",
+  "runway",
+  "vertex",
+  "fal",
+  "luma",
   "ollama",
   "custom",
 ] as const;
 
 export type AiProvider = (typeof AI_PROVIDERS)[number];
+
+export const DISCOVERY_ONLY_PROVIDERS = new Set<AiProvider>(["runway", "vertex", "fal", "luma"]);
 
 // mastra's built-in model router reads these itself; a missing key surfaces as a
 // clear runtime error naming the var when you actually generate:
@@ -29,6 +35,9 @@ const ROUTER_PROVIDERS = new Set<AiProvider>([
 ]);
 
 export function resolveModel(provider: AiProvider, model: string) {
+  if (DISCOVERY_ONLY_PROVIDERS.has(provider)) {
+    throw new Error(`${provider} is configured for model discovery only; media generation adapters are not enabled yet`);
+  }
   if (ROUTER_PROVIDERS.has(provider)) {
     return `${provider}/${model}`;
   }
@@ -40,7 +49,7 @@ export function resolveModel(provider: AiProvider, model: string) {
   // ponytail: custom = any OpenAI-compatible endpoint (vLLM, LiteLLM, gateways)
   return createOpenAI({
     apiKey: process.env.CUSTOM_LLM_API_KEY ?? "not-set",
-    baseURL: process.env.CUSTOM_LLM_BASE_URL,
+    baseURL: process.env.CUSTOM_LLM_BASE_URL || "http://localhost:4000/v1",
   })(model);
 }
 

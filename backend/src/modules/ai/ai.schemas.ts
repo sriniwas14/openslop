@@ -1,16 +1,34 @@
 import { z } from "zod";
 import { AI_PROVIDERS } from "../../lib/mastra";
 
-export const createAiConfigSchema = z.object({
+const aiConfigFields = {
   provider: z.enum(AI_PROVIDERS),
   apiKey: z.string().max(2048).optional().or(z.literal("")),
+  serviceAccountJson: z.string().max(20000).optional().or(z.literal("")),
   baseUrl: z.string().max(2048).optional().or(z.literal("")),
+  projectId: z.string().max(255).optional().or(z.literal("")),
+  location: z.string().max(255).optional().or(z.literal("")),
   model: z.string().max(255).optional().or(z.literal("")),
   name: z.string().max(255).optional().or(z.literal("")),
   isDefault: z.boolean().optional(),
-});
+};
 
-export const updateAiConfigSchema = createAiConfigSchema.partial();
+function requireVertexSettings(value: { provider?: string; projectId?: string; location?: string }, ctx: z.RefinementCtx) {
+  if (value.provider === "vertex") {
+    if (!value.projectId?.trim()) ctx.addIssue({ code: "custom", path: ["projectId"], message: "projectId is required for Google Vertex AI" });
+    if (!value.location?.trim()) ctx.addIssue({ code: "custom", path: ["location"], message: "location is required for Google Vertex AI" });
+  }
+}
+
+export const createAiConfigSchema = z.object(aiConfigFields).superRefine(requireVertexSettings);
+
+// PATCH may update an unrelated field on an existing Vertex config. Validate
+// the pair when either Vertex field is explicitly changed.
+export const updateAiConfigSchema = z.object(aiConfigFields).partial().superRefine((value, ctx) => {
+  if (value.provider === "vertex" && (value.projectId !== undefined || value.location !== undefined)) {
+    requireVertexSettings(value, ctx);
+  }
+});
 
 export const aiConfigIdParamsSchema = z.object({
   id: z.string().min(1),
@@ -21,7 +39,10 @@ export const aiConfigResponseSchema = z.object({
   userId: z.string(),
   provider: z.string(),
   apiKeyMasked: z.string().nullable(),
+  serviceAccountConfigured: z.boolean(),
   baseUrl: z.string().nullable(),
+  projectId: z.string().nullable(),
+  location: z.string().nullable(),
   model: z.string().nullable(),
   name: z.string().nullable(),
   isDefault: z.boolean(),
@@ -31,6 +52,7 @@ export const aiConfigResponseSchema = z.object({
 
 export const modelQuerySchema = z.object({
   provider: z.enum(AI_PROVIDERS),
+  task: z.enum(["video", "image", "text"]).optional(),
   configId: z.string().optional(),
   apiKey: z.string().max(2048).optional().or(z.literal("")),
   baseUrl: z.string().max(2048).optional().or(z.literal("")),

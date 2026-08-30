@@ -10,6 +10,12 @@ for (const p of ["openai", "anthropic", "google", "xai", "openrouter"] as const)
 assert.strictEqual(typeof resolveModel("ollama", "llama3"), "object");
 assert.strictEqual(typeof resolveModel("custom", "my-model"), "object");
 
+// media providers are available for configuration/model discovery, but are not
+// silently sent through the OpenAI-compatible chat adapter.
+for (const p of ["runway", "vertex", "fal", "luma"] as const) {
+  assert.throws(() => resolveModel(p, "test-model"), /model discovery only/, p);
+}
+
 // agent cache returns the same instance for the same config
 const a = getAgent({ provider: "anthropic", model: "claude-test" });
 const b = getAgent({ provider: "anthropic", model: "claude-test" });

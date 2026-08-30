@@ -22,6 +22,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<RootRedirect />} />
         <Route path="/onboarding" element={<Onboarding />} />
+        <Route path="/onboarding/progress" element={<Onboarding />} />
         <Route path="/signin" element={<SignIn />} />
         <Route path="/signup" element={<SignUp />} />
         <Route element={<DashboardLayout />}>

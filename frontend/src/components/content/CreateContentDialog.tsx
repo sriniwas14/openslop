@@ -37,6 +37,7 @@ function toContentItem(row: any): ContentItem {
     scheduledAt: row.scheduledAt ?? null,
     aiScore: Math.round(55 + Math.random() * 35),
     format,
+    mediaUrl: row.mediaUrl ?? null,
   }
 }
 

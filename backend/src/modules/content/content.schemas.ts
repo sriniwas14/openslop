@@ -63,6 +63,7 @@ export const contentResponseSchema = z.object({
   status: z.string(),
   images: z.array(carouselImageSchema).nullable(),
   scripts: z.array(scriptSchema).nullable(),
+  mediaUrl: z.string().nullable(),
   format: z.enum(["vertical", "horizontal"]).nullable(),
   scheduledAt: z.string().nullable(),
   createdAt: z.string(),
@@ -116,6 +117,7 @@ export function parseContentRow(row: {
     ...row,
     images: row.images ? (JSON.parse(row.images) as z.infer<typeof carouselImageSchema>[]) : null,
     scripts: row.scripts ? (JSON.parse(row.scripts) as z.infer<typeof scriptSchema>[]) : null,
+    mediaUrl: (row.mediaUrl as string | null) ?? null,
     format: row.format as "vertical" | "horizontal" | null,
     scheduledAt: (row.scheduledAt as string | null) ?? null,
   };

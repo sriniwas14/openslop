@@ -21,6 +21,7 @@ export type ContentItem = {
   aiScore: number
   /** vertical = 9:16 (reel/tiktok), horizontal = 16:9 */
   format: 'vertical' | 'horizontal' | null
+  mediaUrl?: string | null
 }
 
 /* -------------------------------- metadata -------------------------------- */
@@ -126,5 +127,4 @@ export function scoreTone(score: number): string {
   if (score >= 50) return 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
   return 'bg-muted text-muted-foreground'
 }
-
 

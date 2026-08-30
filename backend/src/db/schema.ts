@@ -9,7 +9,10 @@ export const aiConfigs = sqliteTable(
     userId: text("user_id").notNull(),
     provider: text("provider").notNull(),
     apiKey: text("api_key"),
+    serviceAccountJson: text("service_account_json"),
     baseUrl: text("base_url"),
+    projectId: text("project_id"),
+    location: text("location"),
     model: text("model"),
     name: text("name"),
     isDefault: text("is_default").notNull().default("0"),
@@ -58,6 +61,7 @@ export const contents = sqliteTable(
     status: text("status").notNull().default("draft"), // draft | published
     images: text("images"), // JSON: { url, text, font?, background?, color? }[]
     scripts: text("scripts"), // JSON: { type: "aroll"|"broll", prompt }[]
+    mediaUrl: text("media_url"), // primary generated media URL
     format: text("format"), // vertical | horizontal | null
     scheduledAt: text("scheduled_at"), // ISO datetime, nullable (optional — drafts may omit)
     createdAt: text("created_at")
@@ -99,6 +103,42 @@ export const onboardingProgress = sqliteTable("onboarding_progress", {
     .$defaultFn(() => new Date().toISOString()),
 });
 
+export const mediaJobs = sqliteTable(
+  "media_job",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull(),
+    companyId: text("company_id").notNull(),
+    contentId: text("content_id"),
+    configId: text("config_id").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    task: text("task").notNull(), // image | video
+    prompt: text("prompt").notNull(),
+    inputUrl: text("input_url"),
+    format: text("format"),
+    outputIndex: text("output_index"), // carousel slide index, or null for video
+    providerTaskId: text("provider_task_id"),
+    status: text("status").notNull().default("queued"), // queued | processing | completed | failed
+    outputUrl: text("output_url"),
+    error: text("error"),
+    attempts: text("attempts").notNull().default("0"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    index("idx_media_job_user").on(t.userId),
+    index("idx_media_job_content").on(t.contentId),
+    index("idx_media_job_status").on(t.status),
+  ],
+);
+
 export type Company = typeof companies.$inferSelect;
 export type NewCompany = typeof companies.$inferInsert;
 export type AiConfig = typeof aiConfigs.$inferSelect;
@@ -107,3 +147,4 @@ export type Content = typeof contents.$inferSelect;
 export type NewContent = typeof contents.$inferInsert;
 export type AiPreferences = typeof aiPreferences.$inferSelect;
 export type OnboardingProgress = typeof onboardingProgress.$inferSelect;
+export type MediaJob = typeof mediaJobs.$inferSelect;
