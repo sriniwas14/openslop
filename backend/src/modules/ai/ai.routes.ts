@@ -38,7 +38,8 @@ function toResponse(row: typeof aiConfigs.$inferSelect) {
     baseUrl: row.baseUrl,
     projectId: row.projectId,
     location: row.location,
-    model: row.model,
+    model: (row as any).model,
+    configId: (row as any).configId ?? null,
     name: row.name,
     isDefault: row.isDefault === "1",
     createdAt: row.createdAt,
@@ -228,9 +229,10 @@ export async function aiRoutes(app: FastifyInstance) {
           projectId: body.projectId || null,
           location: body.location || null,
           model: body.model || null,
+          configId: body.configId || null,
           name: body.name || null,
           isDefault,
-        })
+        } as any)
         .returning();
       return reply.status(201).send(toResponse(row));
     },
@@ -252,6 +254,7 @@ export async function aiRoutes(app: FastifyInstance) {
       if (body.projectId !== undefined) patch.projectId = body.projectId || null;
       if (body.location !== undefined) patch.location = body.location || null;
       if (body.model !== undefined) patch.model = body.model || null;
+      if (body.configId !== undefined) patch.configId = body.configId || null;
       if (body.name !== undefined) patch.name = body.name || null;
       if (body.isDefault !== undefined) {
         patch.isDefault = body.isDefault ? "1" : "0";
@@ -318,6 +321,7 @@ export async function aiRoutes(app: FastifyInstance) {
       schema: { querystring: modelQuerySchema, response: { 200: z.array(z.object({ id: z.string(), name: z.string() })), 400: errorResponseSchema, 401: errorResponseSchema } },
     },
     async (request, reply) => {
+      if (!request.session) return;
       const { provider, task = "text", configId, apiKey: qApiKey, baseUrl: qBaseUrl, q } = request.query as any;
       if (!AI_PROVIDERS.includes(provider)) return reply.status(400).send({ error: "unknown provider" } as any);
 

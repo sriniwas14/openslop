@@ -35,6 +35,7 @@ function inputForJob(job: any, config: any): MediaInput {
     prompt: job.prompt,
     inputUrl: job.inputUrl,
     format: job.format ?? null,
+    configId: (config as any).configId ?? (job as any).routerConfigId ?? null,
   };
 }
 
@@ -139,6 +140,7 @@ export async function createMediaJob(input: {
     inputUrl: input.inputUrl ?? null,
     format: input.format ?? null,
     outputIndex: input.outputIndex == null ? null : String(input.outputIndex),
+    routerConfigId: (config as any).configId ?? null,
     status: "queued",
     attempts: "0",
     createdAt: now,

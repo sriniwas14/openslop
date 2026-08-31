@@ -24,6 +24,7 @@ export type AiConfig = {
   projectId: string | null
   location: string | null
   model: string | null
+  configId: string | null
   name: string | null
   isDefault: boolean
   createdAt: string
@@ -42,7 +43,7 @@ export function listAiConfigs(): Promise<AiConfig[]> {
   return fetch('/ai/configs', { credentials: 'include' }).then(handle<AiConfig[]>)
 }
 
-export function createAiConfig(body: { provider: AiProvider; apiKey?: string; serviceAccountJson?: string; baseUrl?: string; projectId?: string; location?: string; model?: string; name?: string; isDefault?: boolean }): Promise<AiConfig> {
+export function createAiConfig(body: { provider: AiProvider; apiKey?: string; serviceAccountJson?: string; baseUrl?: string; projectId?: string; location?: string; model?: string; configId?: string; name?: string; isDefault?: boolean }): Promise<AiConfig> {
   return fetch('/ai/configs', {
     method: 'POST',
     credentials: 'include',
@@ -51,7 +52,7 @@ export function createAiConfig(body: { provider: AiProvider; apiKey?: string; se
   }).then(handle<AiConfig>)
 }
 
-export function updateAiConfig(id: string, body: Partial<{ provider: AiProvider; apiKey: string; serviceAccountJson: string; baseUrl: string; projectId: string; location: string; model: string; name: string; isDefault: boolean }>): Promise<AiConfig> {
+export function updateAiConfig(id: string, body: Partial<{ provider: AiProvider; apiKey: string; serviceAccountJson: string; baseUrl: string; projectId: string; location: string; model: string; configId: string; name: string; isDefault: boolean }>): Promise<AiConfig> {
   return fetch(`/ai/configs/${id}`, {
     method: 'PATCH',
     credentials: 'include',

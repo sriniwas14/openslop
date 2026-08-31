@@ -4,6 +4,7 @@ import DashboardLayout from '@/layouts/DashboardLayout'
 import Dashboard from '@/pages/Dashboard'
 import Trending from '@/pages/Trending'
 import ContentPage from '@/pages/Content'
+import InfluencersPage from '@/pages/Influencers'
 import Settings from '@/pages/Settings'
 import SignIn from '@/pages/SignIn'
 import SignUp from '@/pages/SignUp'
@@ -29,6 +30,7 @@ export default function App() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/dashboard/trending" element={<Trending />} />
           <Route path="/dashboard/content" element={<ContentPage />} />
+          <Route path="/dashboard/influencers" element={<InfluencersPage />} />
           <Route path="/dashboard/settings" element={<Settings />} />
         </Route>
       </Routes>

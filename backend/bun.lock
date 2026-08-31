@@ -11,6 +11,7 @@
         "@fastify/swagger": "^9.8.1",
         "@fastify/swagger-ui": "^6.1.1",
         "@mastra/core": "^1.62.0",
+        "@runwayml/sdk": "^4.17.0",
         "better-auth": "^1.7.1",
         "drizzle-orm": "^0.45.2",
         "fastify": "^5.12.1",
@@ -180,6 +181,8 @@
     "@posthog/core": ["@posthog/core@1.48.11", "", { "dependencies": { "@posthog/types": "^1.405.3" } }, "sha512-fvKbxGaUM8RuCDB1jdhSqAHYjk42INfJDWT1KVezn74sCrfnr1YaUafxzmcS+87D5FzbA2tu7IT0GQRV2WkkRg=="],
 
     "@posthog/types": ["@posthog/types@1.406.2", "", {}, "sha512-RNNoKD7+ZD2v5uzIDp1SOKK1CseZ+YgNPRYCoPlVKuu+wTB/Tb41JCprMjX9E24gPcsdDg8B47dsEsmO0nwEfw=="],
+
+    "@runwayml/sdk": ["@runwayml/sdk@4.17.0", "", { "bin": { "runwayml-sdk": "bin/cli" } }, "sha512-dt5J3gI7ya3yeR0bdK9xj1B4/1elRSHmak99BJlpXr3uxmJIg8HqGrVAJVAods/Cqsc1+RdwR3p8AbbvXDLoiQ=="],
 
     "@sec-ant/readable-stream": ["@sec-ant/readable-stream@0.4.1", "", {}, "sha512-831qok9r2t8AlxLko40y2ebgSDhenenCatLVeW/uBtnHPyhHOvG0C7TvfgecV+wHzIm5KUICgzmVpWS+IMEAeg=="],
 

@@ -9,6 +9,7 @@ const aiConfigFields = {
   projectId: z.string().max(255).optional().or(z.literal("")),
   location: z.string().max(255).optional().or(z.literal("")),
   model: z.string().max(255).optional().or(z.literal("")),
+  configId: z.string().max(255).optional().or(z.literal("")),
   name: z.string().max(255).optional().or(z.literal("")),
   isDefault: z.boolean().optional(),
 };
@@ -44,6 +45,7 @@ export const aiConfigResponseSchema = z.object({
   projectId: z.string().nullable(),
   location: z.string().nullable(),
   model: z.string().nullable(),
+  configId: z.string().nullable(),
   name: z.string().nullable(),
   isDefault: z.boolean(),
   createdAt: z.string(),

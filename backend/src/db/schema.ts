@@ -14,6 +14,7 @@ export const aiConfigs = sqliteTable(
     projectId: text("project_id"),
     location: text("location"),
     model: text("model"),
+    configId: text("config_id"),
     name: text("name"),
     isDefault: text("is_default").notNull().default("0"),
     createdAt: text("created_at")
@@ -116,6 +117,7 @@ export const mediaJobs = sqliteTable(
     configId: text("config_id").notNull(),
     provider: text("provider").notNull(),
     model: text("model").notNull(),
+    routerConfigId: text("router_config_id"),
     task: text("task").notNull(), // image | video
     prompt: text("prompt").notNull(),
     inputUrl: text("input_url"),
@@ -140,6 +142,32 @@ export const mediaJobs = sqliteTable(
   ],
 );
 
+export const influencers = sqliteTable(
+  "influencer",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull(),
+    companyId: text("company_id").notNull(),
+    name: text("name").notNull(),
+    imageUrl: text("image_url").notNull(),
+    prompt: text("prompt"),
+    attributes: text("attributes"), // JSON string
+    source: text("source").notNull().default("generated"), // upload | generated
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    index("idx_influencer_user").on(t.userId),
+    index("idx_influencer_company").on(t.companyId),
+  ],
+);
+
 export type Company = typeof companies.$inferSelect;
 export type NewCompany = typeof companies.$inferInsert;
 export type AiConfig = typeof aiConfigs.$inferSelect;
@@ -149,3 +177,4 @@ export type NewContent = typeof contents.$inferInsert;
 export type AiPreferences = typeof aiPreferences.$inferSelect;
 export type OnboardingProgress = typeof onboardingProgress.$inferSelect;
 export type MediaJob = typeof mediaJobs.$inferSelect;
+export type Influencer = typeof influencers.$inferSelect;

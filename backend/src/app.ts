@@ -11,6 +11,7 @@ import { companyRoutes } from "./modules/company/company.routes";
 import { aiRoutes } from "./modules/ai/ai.routes";
 import { contentRoutes } from "./modules/content/content.routes";
 import { mediaRoutes } from "./modules/media/media.routes";
+import { influencerRoutes } from "./modules/influencer/influencer.routes";
 import { startMediaWorker } from "./modules/media/media.service";
 
 export function createApp() {
@@ -18,6 +19,16 @@ export function createApp() {
 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
+  // ponytail: surface zod issues — default 400 hides which field failed
+  app.setErrorHandler((err, request, reply) => {
+    if ((reply as any).sent || (reply.raw as any).headersSent) return;
+    const v = (err as any).validation;
+    if (v) {
+      request.log.warn({ validation: v }, err.message);
+      return reply.status((err as any).statusCode ?? 400).send({ error: err.message, validation: v });
+    }
+    return reply.send(err);
+  });
 
   // ponytail: local media files — no @fastify/static dep, plain fs stream
   app.get("/media/files/:filename", async (request, reply) => {
@@ -46,6 +57,7 @@ export function createApp() {
   app.register(aiRoutes);
   app.register(contentRoutes);
   app.register(mediaRoutes);
+  app.register(influencerRoutes);
   const stopMediaWorker = startMediaWorker();
   app.addHook("onClose", async () => stopMediaWorker());
 
