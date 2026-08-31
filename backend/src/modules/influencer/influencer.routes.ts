@@ -120,9 +120,9 @@ export async function influencerRoutes(app: FastifyInstance) {
         format: "vertical" as any,
       });
       request.log.info({ jobId: job.id, configId: (job as any).configId, provider: (job as any).provider, model: (job as any).model, status: (job as any).status }, "influencer preview: job created");
-      // poll until done — image typically 10-20s
+      // poll until done — 1s ticks: OpenRouter image models can take 60-90s
       let outputUrl: string | null = null;
-      for (let i = 0; i < 40; i++) {
+      for (let i = 0; i < 150; i++) {
         request.log.info({ iter: i, jobId: job.id }, "influencer preview: poll tick");
         const fresh = await pollMediaJob(job.id);
         request.log.info({ iter: i, jobId: job.id, status: (fresh as any).status, providerTaskId: (fresh as any).providerTaskId, hasOutput: !!(fresh as any).outputUrl, errorPreview: String((fresh as any).error ?? "").slice(0, 500) }, "influencer preview: poll result");
@@ -131,10 +131,10 @@ export async function influencerRoutes(app: FastifyInstance) {
           request.log.error({ jobId: job.id, error: (fresh as any).error }, "influencer preview: provider failed");
           throw new Error(fresh.error || "image generation failed");
         }
-        await new Promise(r => setTimeout(r, 4000));
+        await new Promise(r => setTimeout(r, 1000));
       }
       if (!outputUrl) {
-        request.log.error({ jobId: job.id }, "influencer preview: timed out after 40 polls");
+        request.log.error({ jobId: job.id }, "influencer preview: timed out after 150 polls");
         throw new Error("image generation timed out — try again");
       }
       // download to local /media/files for preview (reuse mediaJobs attach logic but not tied to content)
