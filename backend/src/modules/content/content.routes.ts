@@ -78,27 +78,26 @@ const createContentBodySchema = z
     }
   });
 
-// ponytail: convert influencer imageUrl (/media/files/...) or remote to data:image for Runway referenceImages
+// ponytail: convert influencer imageUrl (/media/files/...) or remote to resized 720p data:image for Runway referenceImages
 async function influencerToDataUri(influencerId: string, userId: string, companyId: string): Promise<string | null> {
   const [inf] = await db.select().from(influencers).where(and(eq(influencers.id, influencerId), eq(influencers.userId, userId), eq(influencers.companyId, companyId)));
   if (!inf) return null;
   const url = inf.imageUrl;
   try {
-    if (url.startsWith("data:")) return url;
+    const { toResizedDataUri } = await import("../../lib/image");
+    if (url.startsWith("data:")) {
+      return toResizedDataUri(Buffer.from(url.slice(url.indexOf(",") + 1), "base64"));
+    }
     if (url.startsWith("/media/files/")) {
       const path = await import("node:path");
       const { readFile } = await import("node:fs/promises");
-      const filePath = path.join(process.cwd(), "data", "media", url.replace("/media/files/", ""));
-      const buf = await readFile(filePath);
-      const ext = filePath.endsWith(".png") ? "image/png" : filePath.endsWith(".webp") ? "image/webp" : "image/jpeg";
-      return `data:${ext};base64,${buf.toString("base64")}`;
+      const buf = await readFile(path.join(process.cwd(), "data", "media", url.replace("/media/files/", "")));
+      return toResizedDataUri(buf);
     }
     if (url.startsWith("http")) {
       const res = await fetch(url);
       if (!res.ok) return null;
-      const buf = Buffer.from(await res.arrayBuffer());
-      const ct = res.headers.get("content-type") || "image/png";
-      return `data:${ct};base64,${buf.toString("base64")}`;
+      return toResizedDataUri(Buffer.from(await res.arrayBuffer()));
     }
     return null;
   } catch { return null; }

@@ -17,18 +17,19 @@ import {
   previewInfluencerSchema,
   previewResponseSchema,
 } from "./influencer.schemas";
+import { INFLUENCER_SYSTEM_PROMPT } from '../../../data/prompts/image'
 
 async function ensureTable() {
   try {
     await db.run(`CREATE TABLE IF NOT EXISTS influencer (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, company_id TEXT NOT NULL, name TEXT NOT NULL, image_url TEXT NOT NULL, prompt TEXT, attributes TEXT, source TEXT NOT NULL DEFAULT 'generated', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)` as any);
     // ensure index
-    try { await db.run(`CREATE INDEX IF NOT EXISTS idx_influencer_company ON influencer(company_id)` as any); } catch {}
-  } catch {}
+    try { await db.run(`CREATE INDEX IF NOT EXISTS idx_influencer_company ON influencer(company_id)` as any); } catch { }
+  } catch { }
 }
 
 function buildPrompt(attrs: any, custom?: string) {
   if (custom?.trim()) return custom.trim().slice(0, 5000);
-  const parts = [
+  const parts = INFLUENCER_SYSTEM_PROMPT + [
     "photorealistic portrait",
     attrs.gender ? `${attrs.gender}` : "",
     attrs.ageRange ? `age ${attrs.ageRange}` : "",
@@ -81,13 +82,13 @@ export async function influencerRoutes(app: FastifyInstance) {
     let rows: any[];
     try {
       rows = await db.select().from(influencers).where(and(eq(influencers.companyId, request.params.companyId), eq(influencers.userId, request.session.user.id))).orderBy(desc(influencers.createdAt));
-    } catch (e:any) {
+    } catch (e: any) {
       if (String(e?.message).includes("no such table") || String(e?.message).includes("no such column")) {
         await ensureTable();
         rows = await db.select().from(influencers).where(and(eq(influencers.companyId, request.params.companyId), eq(influencers.userId, request.session.user.id))).orderBy(desc(influencers.createdAt));
       } else throw e;
     }
-    return rows.map((row:any)=> ({ ...row, attributes: row.attributes ? JSON.parse(row.attributes) : null })) as any;
+    return rows.map((row: any) => ({ ...row, attributes: row.attributes ? JSON.parse(row.attributes) : null })) as any;
   });
 
   r.post("/companies/:companyId/influencers/preview", {
@@ -120,7 +121,7 @@ export async function influencerRoutes(app: FastifyInstance) {
       request.log.info({ jobId: job.id, configId: (job as any).configId, provider: (job as any).provider, model: (job as any).model, status: (job as any).status }, "influencer preview: job created");
       // poll until done — image typically 10-20s
       let outputUrl: string | null = null;
-      for (let i=0;i<40;i++) {
+      for (let i = 0; i < 40; i++) {
         request.log.info({ iter: i, jobId: job.id }, "influencer preview: poll tick");
         const fresh = await pollMediaJob(job.id);
         request.log.info({ iter: i, jobId: job.id, status: (fresh as any).status, providerTaskId: (fresh as any).providerTaskId, hasOutput: !!(fresh as any).outputUrl, errorPreview: String((fresh as any).error ?? "").slice(0, 500) }, "influencer preview: poll result");
@@ -129,7 +130,7 @@ export async function influencerRoutes(app: FastifyInstance) {
           request.log.error({ jobId: job.id, error: (fresh as any).error }, "influencer preview: provider failed");
           throw new Error(fresh.error || "image generation failed");
         }
-        await new Promise(r=>setTimeout(r, 4000));
+        await new Promise(r => setTimeout(r, 4000));
       }
       if (!outputUrl) {
         request.log.error({ jobId: job.id }, "influencer preview: timed out after 40 polls");
@@ -167,12 +168,12 @@ export async function influencerRoutes(app: FastifyInstance) {
           const m = outputUrl.match(/^data:[^;]+;base64,(.*)$/);
           if (m) { await writeFile(fp, Buffer.from(m[1], "base64")); previewUrl = `/media/files/${filename}`; request.log.info({ filename, previewUrl, jobId: job.id }, "influencer preview: saved data uri"); }
         }
-      } catch (dlErr:any) {
+      } catch (dlErr: any) {
         request.log.warn({ err: dlErr, jobId: job.id, outputUrlPrefix: outputUrl.slice(0, 120) }, "influencer preview: download failed, returning raw outputUrl");
       }
       request.log.info({ previewUrl, promptLen: prompt.length, jobId: job.id }, "influencer preview: success");
       return { previewUrl, prompt } as any;
-    } catch (e:any) {
+    } catch (e: any) {
       const msg = String(e?.message ?? "preview failed");
       request.log.warn({ err: e, stack: e?.stack?.slice(0, 2000), body: JSON.stringify(body).slice(0, 2000), companyId: request.params.companyId, userId: (request.session as any)?.user?.id, jobId: job?.id, promptPreview: prompt.slice(0, 300) }, "influencer preview failed");
       if (msg.includes("Configure")) {
@@ -194,7 +195,7 @@ export async function influencerRoutes(app: FastifyInstance) {
     const body = request.body as any;
     let imageUrl: string;
     if (body.imageData) {
-      try { imageUrl = await saveDataUri(body.imageData, body.name); } catch (e:any) { return reply.status(400).send({ error: e.message } as any); }
+      try { imageUrl = await saveDataUri(body.imageData, body.name); } catch (e: any) { return reply.status(400).send({ error: e.message } as any); }
     } else if (body.imageUrl) {
       // if remote url, download and re-host locally for consistent serving
       if (body.imageUrl.startsWith("/media/files/")) {

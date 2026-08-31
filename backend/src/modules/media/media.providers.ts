@@ -82,10 +82,10 @@ async function startRunway(input: MediaInput): Promise<MediaPollResult> {
       return { status: "processing", providerTaskId: String(id) };
     } else {
       if (!configId) throw new Error(`Runway Router configId is required for video (store in Settings → AI Providers → Runway configId)`);
-      const videoInput: any = { promptText: prompt, aspectRatio, resolution: "720p" as const, duration: 5 };
+      const videoInput: any = { promptText: prompt, aspectRatio, resolution: "720p" as const, duration: 5, audio: true };
       if (input.inputUrl) {
-        // Router video with source image: use referenceImages role first
-        videoInput.referenceImages = [{ uri: input.inputUrl }];
+        // Router video with source image: role required by API — "first" = open on this frame
+        videoInput.referenceImages = [{ uri: input.inputUrl, role: "first" as const }];
       }
       const task = await client.generate.video.create({ configId, input: videoInput });
       const id = (task as any)?.id;

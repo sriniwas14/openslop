@@ -15,7 +15,7 @@ import { influencerRoutes } from "./modules/influencer/influencer.routes";
 import { startMediaWorker } from "./modules/media/media.service";
 
 export function createApp() {
-  const app = Fastify({ logger: true }).withTypeProvider<ZodTypeProvider>();
+  const app = Fastify({ logger: true, bodyLimit: 15 * 1024 * 1024 }).withTypeProvider<ZodTypeProvider>();
 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);

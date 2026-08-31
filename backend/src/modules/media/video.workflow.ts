@@ -70,7 +70,7 @@ async function concatVideos(partPaths: string[], outPath: string): Promise<void>
     await runFfmpeg(["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", outPath]);
   } catch {
     // fallback re-encode if copy fails (different codecs)
-    await runFfmpeg(["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c:v", "libx264", "-preset", "fast", "-crf", "23", outPath]);
+    await runFfmpeg(["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-c:a", "aac", "-b:a", "128k", outPath]);
   } finally {
     try { await unlink(listPath); } catch {}
   }
@@ -103,10 +103,9 @@ function splitIntoChunks(scripts: Array<{ type: string; prompt: string }>, n: nu
 async function tryUploadToRunway(pngPath: string, apiKey: string): Promise<string | null> {
   try {
     const buf = await readFile(pngPath);
-    // Runway uploads endpoint: POST /v1/uploads with binary — per docs, not strictly needed but promptImage can be data URI for small images
-    // Try data URI first (cheaper, no extra call) — provider may accept it; we return data URI
-    const b64 = buf.toString("base64");
-    return `data:image/png;base64,${b64}`;
+    // ponytail: resize last frame to 720p jpeg — raw q:v2 PNG data URIs 413 the provider
+    const { toResizedDataUri } = await import("../../lib/image");
+    return await toResizedDataUri(buf);
   } catch { return null; }
 }
 
@@ -123,18 +122,18 @@ async function influencerToDataUri(influencerId: string, userId: string): Promis
     const [inf] = await db.select().from(influencers).where(and(eq(influencers.id, influencerId), eq(influencers.userId, userId)));
     if (!inf) return null;
     const url = inf.imageUrl;
-    if (url.startsWith("data:")) return url;
+    const { toResizedDataUri } = await import("../../lib/image");
+    if (url.startsWith("data:")) {
+      return toResizedDataUri(Buffer.from(url.slice(url.indexOf(",") + 1), "base64"));
+    }
     if (url.startsWith("/media/files/")) {
       const buf = await readFile(path.join(process.cwd(), "data", "media", url.replace("/media/files/", "")));
-      const ext = url.endsWith(".png") ? "image/png" : url.endsWith(".webp") ? "image/webp" : "image/jpeg";
-      return `data:${ext};base64,${buf.toString("base64")}`;
+      return toResizedDataUri(buf);
     }
     if (url.startsWith("http")) {
       const res = await fetch(url);
       if (!res.ok) return null;
-      const buf = Buffer.from(await res.arrayBuffer());
-      const ct = res.headers.get("content-type") || "image/png";
-      return `data:${ct};base64,${buf.toString("base64")}`;
+      return toResizedDataUri(Buffer.from(await res.arrayBuffer()));
     }
     return null;
   } catch { return null; }
