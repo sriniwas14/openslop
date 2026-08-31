@@ -192,7 +192,7 @@ export default function CreateContentDialog({
                       selected && 'border-foreground bg-muted/60 ring-2 ring-foreground/70',
                     )}
                   >
-                    <div className={cn('grid size-9 place-items-center rounded-lg bg-gradient-to-br text-white shadow-xs', m.gradient)}>
+                    <div className={cn('grid size-9 place-items-center rounded-lg text-background', m.gradient)}>
                       <Icon className="size-4.5" />
                     </div>
                     <div className="min-w-0">
@@ -253,7 +253,7 @@ export default function CreateContentDialog({
             <DialogHeader>
               <div className="flex items-center gap-2.5">
                 {meta && (
-                  <div className={cn('grid size-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br text-white', meta.gradient)}>
+                  <div className={cn('grid size-8 shrink-0 place-items-center rounded-lg text-background', meta.gradient)}>
                     <meta.icon className="size-4" />
                   </div>
                 )}
@@ -322,7 +322,7 @@ export default function CreateContentDialog({
                     <Label className="text-xs font-medium">Select influencer <span className="text-destructive">*</span></Label>
                     <div className="relative ml-auto w-48">
                       <Search className="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                      <Input placeholder="Search..." value={influencerSearch} onChange={(e) => setInfluencerSearch(e.target.value)} className="h-7 pl-7 text-xs" />
+                      <Input placeholder="Search..." value={influencerSearch} onChange={(e) => setInfluencerSearch(e.target.value)} className="h-8 pl-7 text-xs" />
                     </div>
                   </div>
                   {influencersLoading ? (

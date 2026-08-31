@@ -33,11 +33,11 @@ export default function DashboardLayout() {
 
   return (
     <CompanyProvider fetcher={listCompanies}>
-      <div className="flex min-h-svh">
+      <div className="flex h-svh">
         <Sidebar mobileOpen={mobileOpen} onMobileClose={() => setMobileOpen(false)} />
-        <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <Topbar onMenuClick={() => setMobileOpen((v) => !v)} />
-          <main className="flex-1 overflow-auto bg-muted/20 p-4 md:p-6">
+          <main className="min-h-0 flex-1 overflow-auto bg-background p-4 md:p-6">
             <Outlet />
           </main>
         </div>

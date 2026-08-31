@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Plus, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { useCompany } from '@/context/CompanyContext'
 import { deleteInfluencer, listInfluencers, type InfluencerRow } from '@/services/influencers'
 import AddInfluencerDialog from '@/components/influencer/AddInfluencerDialog'
@@ -9,7 +10,9 @@ export default function InfluencersPage() {
   const { selectedId } = useCompany()
   const [items, setItems] = useState<InfluencerRow[]>([])
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<InfluencerRow | null>(null)
 
   const load = async () => {
     if (!selectedId) { setItems([]); return }
@@ -25,7 +28,14 @@ export default function InfluencersPage() {
   const handleCreated = (row: InfluencerRow) => setItems((prev) => [row, ...prev])
 
   const handleDelete = async (id: string) => {
-    try { await deleteInfluencer(id); setItems((prev) => prev.filter((x) => x.id !== id)) } catch {}
+    setError(null)
+    try { await deleteInfluencer(id); setItems((prev) => prev.filter((x) => x.id !== id)) } catch (e) { setError(e instanceof Error ? e.message : 'Delete failed — try again') }
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) return
+    await handleDelete(deleteTarget.id)
+    setDeleteTarget(null)
   }
 
   return (
@@ -40,6 +50,8 @@ export default function InfluencersPage() {
           Add New
         </Button>
       </div>
+
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
 
       {loading ? (
         <div className="grid place-items-center rounded-xl border border-dashed bg-card/50 px-6 py-20 text-center">
@@ -59,13 +71,13 @@ export default function InfluencersPage() {
         <div className="columns-1 gap-4 sm:columns-2 lg:columns-3">
           {items.map((inf) => (
             <div key={inf.id} className="mb-4 break-inside-avoid overflow-hidden rounded-xl border bg-card">
-              <img src={inf.imageUrl} alt={inf.name} className="w-full object-cover" loading="lazy" />
+              <img src={inf.imageUrl} alt={inf.name} className="aspect-[3/4] w-full object-cover" loading="lazy" />
               <div className="flex items-center justify-between gap-2 p-3">
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium">{inf.name}</div>
                   <div className="text-xs text-muted-foreground capitalize">{inf.source}</div>
                 </div>
-                <Button variant="ghost" size="icon" aria-label="Delete" onClick={() => handleDelete(inf.id)}>
+                <Button variant="ghost" size="icon" aria-label="Delete" onClick={() => setDeleteTarget(inf)}>
                   <Trash2 className="size-4" />
                 </Button>
               </div>
@@ -75,6 +87,21 @@ export default function InfluencersPage() {
       )}
 
       <AddInfluencerDialog open={dialogOpen} onOpenChange={setDialogOpen} onCreated={handleCreated} />
+
+      <Dialog open={deleteTarget !== null} onOpenChange={(v) => { if (!v) setDeleteTarget(null) }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Delete influencer</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete <span className="font-medium text-foreground">{deleteTarget?.name}</span>? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+            <Button variant="destructive" onClick={confirmDelete}>Delete</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

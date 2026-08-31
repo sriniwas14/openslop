@@ -74,9 +74,9 @@ export default function CalendarView({
       </div>
 
       {/* weekday header */}
-      <div className="grid grid-cols-7 border-b bg-muted/40">
+      <div className="grid grid-cols-7 border-b">
         {WEEKDAYS.map((d) => (
-          <div key={d} className="px-2 py-1.5 text-center text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+          <div key={d} className="px-2 py-1.5 text-center text-[11px] font-medium tracking-wide text-muted-foreground/80 uppercase">
             {d}
           </div>
         ))}
@@ -102,8 +102,8 @@ export default function CalendarView({
                 if (e.key === 'Enter') onCreateAt(iso)
               }}
               className={cn(
-                'group flex min-h-24 cursor-pointer flex-col gap-1 p-1.5 outline-none transition-colors focus-visible:bg-muted/60',
-                inMonth ? 'bg-card hover:bg-muted/40' : 'bg-muted/25 hover:bg-muted/50',
+                'group flex min-h-24 cursor-pointer flex-col gap-1 p-1.5 outline-none transition-colors focus-visible:bg-muted/40',
+                inMonth ? 'bg-card hover:bg-muted/25' : 'bg-muted/15 hover:bg-muted/30',
                 i % 7 !== 0 && 'border-l',
                 i >= 7 && 'border-t',
               )}
@@ -135,7 +135,7 @@ export default function CalendarView({
                         onSelect(item)
                       }}
                       className={cn(
-                        'flex w-full min-w-0 items-center gap-1 rounded-md px-1.5 py-1 text-left text-[11px] leading-tight font-medium transition-transform hover:scale-[1.02]',
+                        'flex w-full min-w-0 items-center gap-1 rounded-md px-1.5 py-1 text-left text-[11px] leading-tight font-medium transition-colors',
                         meta.chip,
                       )}
                     >
