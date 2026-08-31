@@ -11,6 +11,7 @@ import { companyRoutes } from "./modules/company/company.routes";
 import { aiRoutes } from "./modules/ai/ai.routes";
 import { contentRoutes } from "./modules/content/content.routes";
 import { mediaRoutes } from "./modules/media/media.routes";
+import { instagramRoutes } from "./modules/instagram/instagram.routes";
 import { startMediaWorker } from "./modules/media/media.service";
 
 export function createApp() {
@@ -46,6 +47,7 @@ export function createApp() {
   app.register(aiRoutes);
   app.register(contentRoutes);
   app.register(mediaRoutes);
+  app.register(instagramRoutes);
   const stopMediaWorker = startMediaWorker();
   app.addHook("onClose", async () => stopMediaWorker());
 

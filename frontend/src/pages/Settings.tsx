@@ -9,6 +9,7 @@ import { type Company, createCompanySSE, deleteCompany, listCompanies, updateCom
 import { useCompany } from '@/context/CompanyContext'
 import { cn } from '@/lib/utils'
 import ModelSelector from '@/components/ai/ModelSelector'
+import ApifySettings from '@/components/integrations/ApifySettings'
 
 function GeneralTab() {
   const { selectedId, setSelectedId } = useCompany()
@@ -300,15 +301,16 @@ function AiProvidersTab() {
 }
 
 export default function Settings() {
-  const [tab, setTab] = useState<'general' | 'ai'>('general')
+  const [tab, setTab] = useState<'general' | 'ai' | 'integrations'>('general')
   return (
     <div className="grid gap-4">
       <h1 className="text-2xl font-semibold tracking-tight">Settings</h1>
       <div className="flex gap-2 border-b">
         <button onClick={() => setTab('general')} className={`-mb-px border-b-2 px-3 py-2 text-sm ${tab === 'general' ? 'border-foreground font-medium' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>General</button>
         <button onClick={() => setTab('ai')} className={`-mb-px border-b-2 px-3 py-2 text-sm ${tab === 'ai' ? 'border-foreground font-medium' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>AI Providers</button>
+        <button onClick={() => setTab('integrations')} className={`-mb-px border-b-2 px-3 py-2 text-sm ${tab === 'integrations' ? 'border-foreground font-medium' : 'border-transparent text-muted-foreground hover:text-foreground'}`}>Integrations</button>
       </div>
-      {tab === 'general' ? <GeneralTab /> : <AiProvidersTab />}
+      {tab === 'general' ? <GeneralTab /> : tab === 'ai' ? <AiProvidersTab /> : <ApifySettings />}
     </div>
   )
 }
