@@ -27,9 +27,9 @@ async function ensureTable() {
   } catch { }
 }
 
-function buildPrompt(attrs: any, custom?: string) {
+export function buildPrompt(attrs: any, custom?: string) {
   if (custom?.trim()) return custom.trim().slice(0, 5000);
-  const parts = INFLUENCER_SYSTEM_PROMPT + [
+  const parts = [
     "photorealistic portrait",
     attrs.gender ? `${attrs.gender}` : "",
     attrs.ageRange ? `age ${attrs.ageRange}` : "",
@@ -41,7 +41,8 @@ function buildPrompt(attrs: any, custom?: string) {
     attrs.vibe ? `${attrs.vibe} vibe` : "",
     attrs.pose ? `${attrs.pose} pose` : "",
   ].filter(Boolean).join(", ");
-  return `${parts}, high detail, studio lighting, sharp focus, 8k`.slice(0, 5000);
+  // ponytail: style prompt forbids studio lighting — tail dropped, style + attrs only
+  return `${INFLUENCER_SYSTEM_PROMPT}\n${parts}`.slice(0, 5000);
 }
 
 async function assertCompany(request: any, companyId: string) {

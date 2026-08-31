@@ -68,7 +68,7 @@ async function startRunway(input: MediaInput): Promise<MediaPollResult> {
   const client = runwayClient(input.apiKey ?? "");
   // prefer Router configId (new path); fallback to model only for legacy configs that lack configId
   const configId = input.configId?.trim() || null;
-  const prompt = input.task === "image" ? input.prompt.slice(0, 1000) : input.prompt;
+  const prompt = input.task === "image" ? input.prompt.slice(0, 5000) : input.prompt;
   const aspectRatio = runwayAspectRatio(input.format);
   try {
     if (input.task === "image") {
