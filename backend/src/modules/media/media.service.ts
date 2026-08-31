@@ -158,6 +158,7 @@ export async function queueContentMedia(input: {
   images?: Array<{ url: string; text: string }> | null;
   scripts?: Array<{ type: string; prompt: string }> | null;
   format?: MediaFormat;
+  influencerImageUrl?: string | null;
 }) {
   const task: MediaTask = input.kind === "carousel" ? "image" : "video";
   const jobs: any[] = [];
@@ -177,7 +178,7 @@ export async function queueContentMedia(input: {
         ...input,
         task,
         prompt: input.scripts.map((script, index) => `Beat ${index + 1} (${script.type}): ${script.prompt}`).join("\n\n"),
-        inputUrl: null,
+        inputUrl: input.influencerImageUrl ?? null,
         outputIndex: null,
       }));
     }

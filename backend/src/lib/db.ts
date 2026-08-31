@@ -7,5 +7,6 @@ sqlite.exec("PRAGMA foreign_keys = ON");
 // ponytail: lazy migrate for router configId (alter table, ignore if exists)
 try { sqlite.exec("ALTER TABLE ai_config ADD COLUMN config_id TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE media_job ADD COLUMN router_config_id TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE content ADD COLUMN influencer_id TEXT"); } catch {}
 
 export const db = drizzle(sqlite, { schema });

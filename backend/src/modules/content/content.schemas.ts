@@ -25,6 +25,7 @@ const baseContentFields = {
   scripts: z.array(scriptSchema).max(50).optional(),
   format: z.enum(["vertical", "horizontal"]).optional(),
   duration: z.number().int().refine((v) => [15, 30, 45].includes(v), { message: "duration must be 15, 30 or 45" }).optional(),
+  influencerId: z.string().min(1).optional(),
   scheduledAt: z.string().datetime({ offset: true }).nullable().optional(),
 };
 
@@ -36,6 +37,7 @@ export const createContentSchema = z.object(baseContentFields).superRefine((v, c
     if (v.scripts) ctx.addIssue({ code: "custom", path: ["scripts"], message: "scripts not allowed for carousel" });
     if (v.format) ctx.addIssue({ code: "custom", path: ["format"], message: "format not allowed for carousel" });
     if (v.duration) ctx.addIssue({ code: "custom", path: ["duration"], message: "duration not allowed for carousel" });
+    if (v.influencerId) ctx.addIssue({ code: "custom", path: ["influencerId"], message: "influencer not allowed for carousel" });
   }
   if ((videoKinds as readonly string[]).includes(v.kind)) {
     if (!v.scripts || v.scripts.length === 0) {
@@ -48,6 +50,9 @@ export const createContentSchema = z.object(baseContentFields).superRefine((v, c
       ctx.addIssue({ code: "custom", path: ["duration"], message: "duration required for video types" });
     }
     if (v.images) ctx.addIssue({ code: "custom", path: ["images"], message: "images not allowed for video types" });
+    if (v.kind === "talkinghead" && !v.influencerId) {
+      ctx.addIssue({ code: "custom", path: ["influencerId"], message: "influencer required for talkinghead" });
+    }
   }
 });
 
@@ -71,6 +76,7 @@ export const contentResponseSchema = z.object({
   mediaUrl: z.string().nullable(),
   format: z.enum(["vertical", "horizontal"]).nullable(),
   duration: z.number().int().nullable(),
+  influencerId: z.string().nullable(),
   scheduledAt: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -110,6 +116,7 @@ export const generateFromIdeaSchema = z.object({
   kind: z.enum(contentKinds).optional(),
   title: z.string().min(1).max(255).optional(),
   duration: z.number().int().refine((v) => [15, 30, 45].includes(v), { message: "duration must be 15, 30 or 45" }).optional(),
+  influencerId: z.string().min(1).optional(),
 }).refine((v) => !!v.idea || !!v.ideaId, { message: "idea or ideaId required" });
 
 // ponytail: helpers — sqlite stores JSON as text; parse on read, stringify on write
@@ -118,6 +125,7 @@ export function parseContentRow(row: {
   scripts: string | null;
   format: string | null;
   duration: string | number | null;
+  influencerId?: string | null;
   scheduledAt: string | null;
   [k: string]: unknown;
 }) {
@@ -130,6 +138,7 @@ export function parseContentRow(row: {
     mediaUrl: (row.mediaUrl as string | null) ?? null,
     format: row.format as "vertical" | "horizontal" | null,
     duration: Number.isFinite(duration as number) ? (duration as number) : null,
+    influencerId: (row.influencerId as string | null) ?? (row as any).influencer_id ?? null,
     scheduledAt: (row.scheduledAt as string | null) ?? null,
   };
 }
@@ -140,6 +149,7 @@ export function serializeContentInput(input: z.infer<typeof createContentSchema>
     status: input.status ?? "draft",
     scheduledAt: input.scheduledAt ? new Date(input.scheduledAt).toISOString() : null,
     duration: (input as any).duration ?? null,
+    influencerId: (input as any).influencerId ?? null,
     images: input.images ? JSON.stringify(input.images) : null,
     scripts: input.scripts ? JSON.stringify(input.scripts) : null,
   };

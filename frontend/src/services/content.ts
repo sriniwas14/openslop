@@ -45,6 +45,7 @@ export type ContentRow = {
   mediaUrl: string | null
   format: 'vertical' | 'horizontal' | null
   duration: number | null
+  influencerId: string | null
   scheduledAt: string | null
   createdAt: string
   updatedAt: string
@@ -64,7 +65,7 @@ export function renderVideo(contentId: string): Promise<ContentRow> {
 
 export function generateFromIdea(
   companyId: string,
-  body: { idea: Idea; selectedHook: string; kind?: string; title?: string; duration?: 15 | 30 | 45 },
+  body: { idea: Idea; selectedHook: string; kind?: string; title?: string; duration?: 15 | 30 | 45; influencerId?: string },
 ): Promise<unknown> {
   return fetch(`/companies/${companyId}/contents/generate`, {
     method: 'POST',
