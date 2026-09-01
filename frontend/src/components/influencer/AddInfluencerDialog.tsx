@@ -13,7 +13,11 @@ type Mode = 'choice' | 'upload' | 'generate'
 
 const GENDERS = ['female', 'male', 'nonbinary']
 const AGE = ['18-25', '25-35', '35-45', '45+']
-const ETHNICITIES = ['caucasian', 'african', 'asian', 'hispanic', 'mixed']
+const ETHNICITIES = [
+  'american', 'italian', 'japanese', 'indian', 'korean', 'chinese', 'brazilian', 'mexican',
+  'french', 'german', 'british', 'spanish', 'russian', 'greek', 'turkish', 'arabic',
+  'african', 'latino', 'filipino', 'vietnamese', 'thai', 'polish', 'scandinavian', 'mixed',
+]
 const HAIR = ['blonde', 'brown', 'black', 'red', 'grey']
 const EYES = ['blue', 'brown', 'green', 'hazel']
 const CLOTHING = ['casual', 'business', 'streetwear', 'athletic', 'elegant']
@@ -25,7 +29,7 @@ function SelectField({ label, value, options, onChange }: { label: string; value
   return (
     <div className="grid gap-1">
       <Label className="text-xs">{label}</Label>
-      <select value={value} onChange={(e) => onChange(e.target.value)} className="h-8 rounded-md border bg-background px-2 text-sm">
+      <select value={value} onChange={(e) => onChange(e.target.value)} className="h-10 rounded-md border bg-background px-3 text-sm">
         {options.map((o) => <option key={o} value={o}>{o}</option>)}
       </select>
     </div>

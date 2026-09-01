@@ -1,4 +1,4 @@
-import { Building2, Check, ChevronsUpDown, Plus } from 'lucide-react'
+import { Check, ChevronsUpDown, Plus } from 'lucide-react'
 import { useState } from 'react'
 import { useCompany } from '@/context/CompanyContext'
 import { createCompany } from '@/services/companies'
@@ -108,11 +108,6 @@ export default function CompanyCombobox() {
           <DialogHeader>
             <DialogTitle>Add new company</DialogTitle>
           </DialogHeader>
-
-          <div className="grid place-items-center gap-2 rounded-xl border border-dashed bg-muted/50 p-6 text-muted-foreground">
-            <Building2 className="size-10 opacity-40" />
-            <p className="text-xs">Add your first company</p>
-          </div>
 
           <form onSubmit={onSubmit} className="grid gap-4">
             <div className="grid gap-2">

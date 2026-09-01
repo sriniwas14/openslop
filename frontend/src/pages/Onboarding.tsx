@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { FormEvent } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { ChevronLeft, Eye, EyeOff } from 'lucide-react'
 import { useSession, signUp, signIn } from '@/services/auth'
 import { AI_PROVIDERS, AI_PROVIDER_LABELS, type AiConfig, type AiPreferences, type AiProvider, createAiConfig, getAiPreferences, getOnboardingProgress, listAiConfigs, saveOnboardingProgress, updateAiPreferences } from '@/services/ai'
 import { createCompanySSE, listCompanies } from '@/services/companies'
+import BrandLogo from '@/components/BrandLogo'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -24,6 +26,7 @@ export default function Onboarding() {
   const [userError, setUserError] = useState<string | null>(null)
   const [userLoading, setUserLoading] = useState(false)
   const [isSignInMode, setIsSignInMode] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
 
   // step 2: providers (credentials only) + routing (provider+model per task, all required)
   const [configs, setConfigs] = useState<AiConfig[]>([])
@@ -203,25 +206,27 @@ export default function Onboarding() {
   ]
 
   return (
-    <main className="grid min-h-svh place-items-center bg-muted/20 p-4">
-      <Card className="w-full max-w-xl">
-        <CardHeader>
-          <CardTitle>Welcome — let’s get you set up</CardTitle>
+    <main className="grid min-h-svh place-items-center p-6">
+      <div className="grid w-full max-w-2xl gap-6">
+        <div className="flex justify-center"><BrandLogo className="h-9" /></div>
+        <Card>
+        <CardHeader className="gap-2">
+          <CardTitle className="text-xl">Welcome — let’s get you set up</CardTitle>
           <CardDescription>3 quick steps. You’ll land in the dashboard only after the company is created successfully.</CardDescription>
-          <div className="mt-4 flex items-center gap-2">
+          <div className="mt-2 flex items-center gap-3">
             {steps.map((s, i) => (
-              <div key={s.n} className="flex flex-1 items-center gap-2">
-                <div className={`flex size-7 shrink-0 items-center justify-center rounded-full border text-xs font-medium ${step === s.n ? 'bg-primary text-primary-foreground border-primary' : step > s.n ? 'bg-primary/15 border-primary/30 text-primary' : 'bg-background text-muted-foreground'}`}>{s.n}</div>
+              <div key={s.n} className="flex flex-1 items-center gap-3">
+                <div className={`flex size-8 shrink-0 items-center justify-center rounded-full border text-xs font-medium ${step === s.n ? 'border-foreground bg-foreground text-background' : step > s.n ? 'border-foreground/30 bg-foreground/10 text-foreground' : 'bg-background text-muted-foreground'}`}>{s.n}</div>
                 <span className={`hidden text-xs sm:inline ${step === s.n ? 'font-medium text-foreground' : 'text-muted-foreground'}`}>{s.label}</span>
-                {i < steps.length - 1 && <div className={`mx-1 h-px flex-1 ${step > s.n ? 'bg-primary/40' : 'bg-border'}`} />}
+                {i < steps.length - 1 && <div className={`h-px flex-1 ${step > s.n ? 'bg-foreground/40' : 'bg-border'}`} />}
               </div>
             ))}
           </div>
         </CardHeader>
         <CardContent>
           {step === 1 && !session && (
-            <form onSubmit={onSubmitUser} className="grid gap-4">
-              <h3 className="font-medium">{isSignInMode ? 'Sign in' : 'Create user'}</h3>
+            <form onSubmit={onSubmitUser} className="grid gap-5">
+              <h3 className="text-base font-medium">{isSignInMode ? 'Sign in' : 'Create user'}</h3>
               {!isSignInMode && (
                 <div className="grid gap-2">
                   <Label htmlFor="ob-uname">Name</Label>
@@ -234,11 +239,16 @@ export default function Onboarding() {
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="ob-pwd">Password</Label>
-                <Input id="ob-pwd" type="password" autoComplete={isSignInMode ? 'current-password' : 'new-password'} minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} required />
+                <div className="relative">
+                  <Input id="ob-pwd" type={showPassword ? 'text' : 'password'} autoComplete={isSignInMode ? 'current-password' : 'new-password'} minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} className="pr-10" required />
+                  <button type="button" aria-label={showPassword ? 'Hide password' : 'Show password'} onClick={() => setShowPassword((v) => !v)} className="absolute inset-y-0 right-0 grid w-9 place-items-center text-muted-foreground transition-colors hover:text-foreground">
+                    {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </button>
+                </div>
               </div>
               {userError && <p role="alert" className="text-sm text-destructive">{userError}</p>}
-              <Button type="submit" disabled={userLoading}>{userLoading ? (isSignInMode ? 'Signing in…' : 'Creating…') : (isSignInMode ? 'Sign in & continue' : 'Create & continue')}</Button>
-              <p className="text-center text-sm text-muted-foreground">
+              <Button type="submit" disabled={userLoading} size="lg" className="mt-1 w-full">{userLoading ? (isSignInMode ? 'Signing in…' : 'Creating…') : (isSignInMode ? 'Sign in & continue' : 'Create & continue')}</Button>
+              <p className="mt-1 text-center text-sm text-muted-foreground">
                 {isSignInMode ? (
                   <>No account? <button type="button" className="underline underline-offset-4" onClick={() => setIsSignInMode(false)}>Create one</button></>
                 ) : (
@@ -253,12 +263,8 @@ export default function Onboarding() {
           {step === 2 && (
             <div className="grid gap-6">
               <div className="flex items-center justify-between">
-                <h3 className="font-medium">Configure AI Models</h3>
-                {!session ? (
-                  <Button type="button" variant="ghost" size="sm" onClick={() => setStep(1)}>Back</Button>
-                ) : (
-                  <span className="text-xs text-muted-foreground">Signed in</span>
-                )}
+                <h3 className="text-base font-medium">Configure AI Models</h3>
+                {session && <span className="text-xs text-muted-foreground">Signed in</span>}
               </div>
               {!session ? (
                 <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">No session — create user first.</p>
@@ -279,7 +285,7 @@ export default function Onboarding() {
                     {configs.map((c) => (
                       <div key={c.id} className="flex items-center justify-between rounded-md border px-3 py-2">
                         <div className="min-w-0">
-                          <div className="flex items-center gap-2"><span className="text-sm font-medium truncate">{c.name || AI_PROVIDER_LABELS[c.provider as AiProvider] || c.provider}</span><span className="rounded bg-muted px-1.5 py-0.5 text-xs">{AI_PROVIDER_LABELS[c.provider as AiProvider] || c.provider}</span>{c.isDefault && <span className="rounded bg-primary px-1.5 py-0.5 text-xs text-primary-foreground">default</span>}</div>
+                          <div className="flex items-center gap-2"><span className="min-w-0 truncate text-sm font-medium">{c.name || AI_PROVIDER_LABELS[c.provider as AiProvider] || c.provider}</span><span className="rounded bg-muted px-1.5 py-0.5 text-xs">{AI_PROVIDER_LABELS[c.provider as AiProvider] || c.provider}</span>{c.isDefault && <span className="rounded bg-foreground px-1.5 py-0.5 text-xs text-background">default</span>}</div>
                           <div className="truncate text-xs text-muted-foreground">{c.baseUrl ?? 'no baseUrl'} · {c.apiKeyMasked ?? 'no key'}</div>
                         </div>
                       </div>
@@ -297,10 +303,10 @@ export default function Onboarding() {
                   const cfg = getCfg(cfgId ?? null)
                   const providerForModel = (cfg?.provider as AiProvider) ?? "openrouter"
                   return (
-                    <div key={task} className="grid gap-2 rounded-md border bg-muted/20 p-3">
+                    <div key={task} className="grid gap-2 rounded-md border bg-background p-3">
                       <Label className="capitalize">{task} <span className="text-destructive">*</span></Label>
                       <div className="grid gap-2 sm:grid-cols-2">
-                        <div className="grid gap-1.5">
+                        <div className="grid min-w-0 gap-1.5">
                           <span className="text-xs text-muted-foreground">Provider</span>
                           <select value={cfgId ?? ""} onChange={async (e) => {
                             const v = e.target.value || null
@@ -309,12 +315,12 @@ export default function Onboarding() {
                             if (!v) (next as any)[task==="video" ? "videoModel" : task==="image" ? "imageModel" : "textModel"] = null
                             setPrefs(next)
                             try { await updateAiPreferences({ [key]: v, ...(v ? {} : { [task==="video" ? "videoModel" : task==="image" ? "imageModel" : "textModel"]: null } as any) }); void saveProgress(2) } catch {}
-                          }} disabled={configs.length===0} className="h-9 rounded-md border bg-background px-3 text-sm">
+                          }} disabled={configs.length===0} className="h-10 rounded-md border bg-background px-3 text-sm">
                             <option value="">Select provider</option>
                             {configs.map((c) => <option key={c.id} value={c.id}>{c.name || c.provider} ({c.provider})</option>)}
                           </select>
                         </div>
-                        <div className="grid gap-1.5">
+                        <div className="grid min-w-0 gap-1.5">
                           <span className="text-xs text-muted-foreground">Model</span>
                           <ModelSelector provider={providerForModel} task={task} configId={cfgId ?? undefined} value={modelVal} onChange={async (v) => {
                             const key = task==="video" ? "videoModel" : task==="image" ? "imageModel" : "textModel"
@@ -324,7 +330,7 @@ export default function Onboarding() {
                           }} disabled={!cfgId} />
                         </div>
                       </div>
-                      {(!cfgId || !modelVal) && <p className="text-xs text-amber-600">{task} is required — select provider and model.</p>}
+                      {(!cfgId || !modelVal) && <p className="text-xs text-warning">{task} is required — select provider and model.</p>}
                     </div>
                   )
                 })}
@@ -332,7 +338,14 @@ export default function Onboarding() {
               </div>
 
               {aiError && <p role="alert" className="text-sm text-destructive">{aiError}</p>}
-              <Button onClick={onSubmitAi} disabled={aiLoading || !session || !prefs.videoConfigId || !prefs.videoModel || !prefs.imageConfigId || !prefs.imageModel || !prefs.textConfigId || !prefs.textModel}>{aiLoading ? 'Saving…' : 'Save & continue'}</Button>
+              <div className="mt-1 flex gap-2">
+                {!session && (
+                  <Button type="button" variant="outline" size="lg" onClick={() => setStep(1)}>
+                    <ChevronLeft className="size-4" /> Back
+                  </Button>
+                )}
+                <Button onClick={onSubmitAi} disabled={aiLoading || !session || !prefs.videoConfigId || !prefs.videoModel || !prefs.imageConfigId || !prefs.imageModel || !prefs.textConfigId || !prefs.textModel} size="lg" className="flex-1">{aiLoading ? 'Saving…' : 'Save & continue'}</Button>
+              </div>
 
               <Dialog open={providerDialogOpen} onOpenChange={(v) => setProviderDialogOpen(v)}>
                 <DialogContent className="sm:max-w-lg">
@@ -341,7 +354,7 @@ export default function Onboarding() {
                     <DialogDescription>Credentials only — model is chosen per task above.</DialogDescription>
                   </DialogHeader>
                   <form onSubmit={addProviderInOnboarding} className="grid gap-4">
-                    <div className="grid gap-2"><Label>Provider</Label><select value={provider} onChange={(e) => setProvider(e.target.value as AiProvider)} className="h-9 rounded-md border bg-transparent px-3 text-sm">{AI_PROVIDERS.map((p) => <option key={p} value={p}>{AI_PROVIDER_LABELS[p]}</option>)}</select></div>
+                    <div className="grid gap-2"><Label>Provider</Label><select value={provider} onChange={(e) => setProvider(e.target.value as AiProvider)} className="h-10 rounded-md border bg-transparent px-3 text-sm">{AI_PROVIDERS.map((p) => <option key={p} value={p}>{AI_PROVIDER_LABELS[p]}</option>)}</select></div>
                     <div className="grid gap-2"><Label htmlFor="ob-ainame">Label (optional)</Label><Input id="ob-ainame" value={aiName} onChange={(e) => setAiName(e.target.value)} placeholder="My OpenRouter" maxLength={255} /></div>
                     {provider !== 'vertex' && <div className="grid gap-2"><Label htmlFor="ob-key">API Key</Label><Input id="ob-key" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." />{provider === 'ollama' && <p className="text-xs text-muted-foreground">Ollama usually needs no key.</p>}{provider === 'fal' && <p className="text-xs text-muted-foreground">Use a fal.ai API key.</p>}</div>}
                     {showVertexSettings && <>
@@ -350,9 +363,9 @@ export default function Onboarding() {
                       <div className="grid gap-2"><Label htmlFor="ob-location">Vertex location</Label><Input id="ob-location" value={location} onChange={(e) => setLocation(e.target.value)} placeholder="us-central1" required /></div>
                     </>}
                     {showBaseUrl && <div className="grid gap-2"><Label htmlFor="ob-base">Base URL</Label><Input id="ob-base" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={provider === 'ollama' ? 'http://localhost:11434' : 'https://api.example.com/v1'} /></div>}
-                    <DialogFooter>
-                      <Button type="button" variant="ghost" onClick={() => setProviderDialogOpen(false)}>Cancel</Button>
-                      <Button type="submit" disabled={providerSaving || !provider}>{providerSaving ? 'Adding…' : 'Add'}</Button>
+                    <DialogFooter className="mt-2">
+                      <Button type="button" variant="ghost" size="lg" onClick={() => setProviderDialogOpen(false)}>Cancel</Button>
+                      <Button type="submit" disabled={providerSaving || !provider} size="lg">{providerSaving ? 'Adding…' : 'Add'}</Button>
                     </DialogFooter>
                   </form>
                 </DialogContent>
@@ -361,11 +374,8 @@ export default function Onboarding() {
           )}
 
           {step === 3 && (
-            <form onSubmit={onSubmitCompany} className="grid gap-4">
-              <div className="flex items-center justify-between">
-                <h3 className="font-medium">Add Company</h3>
-                <Button type="button" variant="ghost" size="sm" onClick={() => setStep(2)}>Back</Button>
-              </div>
+            <form onSubmit={onSubmitCompany} className="grid gap-5">
+              <h3 className="text-base font-medium">Add Company</h3>
               {!session ? (
                 <p className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">No active session — create user first.</p>
               ) : (
@@ -382,12 +392,18 @@ export default function Onboarding() {
               </div>
               {companyProgress && <p className="text-xs text-muted-foreground">Progress: {companyProgress}</p>}
               {companyError && <p role="alert" className="text-sm text-destructive">{companyError}</p>}
-              <Button type="submit" disabled={companyLoading || !session}>{companyLoading ? 'Creating…' : 'Create company & go to dashboard'}</Button>
+              <div className="mt-1 flex gap-2">
+                <Button type="button" variant="outline" size="lg" onClick={() => setStep(2)}>
+                  <ChevronLeft className="size-4" /> Back
+                </Button>
+                <Button type="submit" disabled={companyLoading || !session} size="lg" className="flex-1">{companyLoading ? 'Creating…' : 'Create company & go to dashboard'}</Button>
+              </div>
               <p className="text-xs text-muted-foreground">Only on success you’ll be routed to the dashboard.</p>
             </form>
           )}
         </CardContent>
       </Card>
+      </div>
     </main>
   )
 }

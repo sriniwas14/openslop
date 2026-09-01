@@ -33,7 +33,7 @@ export const CONTENT_TYPES: Record<
     label: string
     description: string
     icon: LucideIcon
-    /** tailwind gradient used for thumbnails/previews */
+    /** monochrome tone used for thumbnails/previews */
     gradient: string
     /** suggested platforms for the creation workflow */
     platforms: Platform[]
@@ -43,21 +43,21 @@ export const CONTENT_TYPES: Record<
     label: 'Carousel',
     description: 'Create a multi-slide social post',
     icon: GalleryHorizontal,
-    gradient: 'from-violet-500 via-indigo-500 to-blue-500',
+    gradient: 'bg-foreground',
     platforms: ['instagram', 'linkedin', 'x'],
   },
   talkinghead: {
     label: 'Talking Head',
     description: 'Generate a presenter-style video',
     icon: UserRound,
-    gradient: 'from-sky-500 via-cyan-500 to-teal-400',
+    gradient: 'bg-foreground/80',
     platforms: ['youtube', 'linkedin', 'instagram'],
   },
   greenscreen: {
     label: 'Green Screen',
     description: 'Create a green-screen overlay video',
     icon: Replace,
-    gradient: 'from-rose-500 via-pink-500 to-fuchsia-500',
+    gradient: 'bg-foreground/60',
     platforms: ['tiktok', 'instagram', 'youtube'],
   },
 }
@@ -78,26 +78,26 @@ export const STATUSES: Record<
   draft: {
     label: 'Draft',
     badge: 'bg-muted text-muted-foreground',
-    dot: 'bg-zinc-400',
-    chip: 'bg-zinc-500/10 text-zinc-600 dark:text-zinc-300',
+    dot: 'bg-muted-foreground/60',
+    chip: 'bg-muted text-muted-foreground',
   },
   review: {
     label: 'In review',
-    badge: 'bg-amber-500/10 text-amber-600 dark:text-amber-400',
-    dot: 'bg-amber-500',
-    chip: 'bg-amber-500/15 text-amber-700 dark:text-amber-300',
+    badge: 'bg-warning/10 text-warning',
+    dot: 'bg-warning',
+    chip: 'bg-warning/15 text-warning',
   },
   scheduled: {
     label: 'Scheduled',
-    badge: 'bg-sky-500/10 text-sky-600 dark:text-sky-400',
-    dot: 'bg-sky-500',
-    chip: 'bg-sky-500/15 text-sky-700 dark:text-sky-300',
+    badge: 'bg-info/10 text-info',
+    dot: 'bg-info',
+    chip: 'bg-info/15 text-info',
   },
   published: {
     label: 'Published',
-    badge: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
-    dot: 'bg-emerald-500',
-    chip: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
+    badge: 'bg-success/10 text-success',
+    dot: 'bg-success',
+    chip: 'bg-success/15 text-success',
   },
 }
 
@@ -123,9 +123,9 @@ export function sameDay(a: Date, b: Date): boolean {
 }
 
 export function scoreTone(score: number): string {
-  if (score >= 80) return 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
-  if (score >= 65) return 'bg-sky-500/10 text-sky-600 dark:text-sky-400'
-  if (score >= 50) return 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
+  if (score >= 80) return 'bg-success/10 text-success'
+  if (score >= 65) return 'bg-info/10 text-info'
+  if (score >= 50) return 'bg-warning/10 text-warning'
   return 'bg-muted text-muted-foreground'
 }
 

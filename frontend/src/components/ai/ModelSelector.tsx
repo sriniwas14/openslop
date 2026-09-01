@@ -45,8 +45,8 @@ export default function ModelSelector({ provider, task, configId, apiKey, baseUr
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="outline" role="combobox" disabled={disabled} className="w-full justify-between font-normal">
-          <span className="truncate">{display}</span>
+        <Button variant="outline" role="combobox" disabled={disabled} className="w-full min-w-0 justify-between font-normal">
+          <span className="min-w-0 truncate text-left">{display}</span>
           <ChevronsUpDown className="ml-2 size-4 shrink-0 opacity-50" />
         </Button>
       </PopoverTrigger>
@@ -102,7 +102,6 @@ export default function ModelSelector({ provider, task, configId, apiKey, baseUr
               placeholder="Or enter custom model"
               value={value}
               onChange={(e) => onChange(e.target.value)}
-              className="h-8"
             />
           </div>
         </div>

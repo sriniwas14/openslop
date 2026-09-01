@@ -91,6 +91,16 @@ const CURATED_BY_TASK: Record<string, Partial<Record<ModelTask, string[]>>> = {
     image: [],
     video: [],
   },
+  openrouter: {
+    image: [
+      "google/gemini-2.5-flash-image",
+      "openai/gpt-image-1",
+      "bytedance-seed/seedream-4.5",
+      "black-forest-labs/flux.2-pro",
+      "xai/grok-2-image",
+    ],
+    video: [],
+  },
   luma: {
     image: ["photon-1", "photon-flash-1"],
     video: ["ray-2", "ray-flash-2"],

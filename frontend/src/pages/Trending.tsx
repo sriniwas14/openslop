@@ -4,7 +4,7 @@ export default function Trending() {
   return (
     <div className="grid gap-4">
       <h1 className="text-2xl font-semibold tracking-tight">Trending</h1>
-      <Card>
+      <Card className="border-dashed">
         <CardHeader>
           <CardTitle>Trending</CardTitle>
           <CardDescription>What’s popular right now</CardDescription>

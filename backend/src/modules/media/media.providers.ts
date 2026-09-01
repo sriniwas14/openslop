@@ -11,6 +11,7 @@ export type MediaInput = {
   serviceAccountJson?: string | null;
   projectId?: string | null;
   location?: string | null;
+  baseUrl?: string | null;
   task: MediaTask;
   prompt: string;
   inputUrl?: string | null;
@@ -52,7 +53,7 @@ function ratio(format?: "vertical" | "horizontal" | null) {
   return format === "horizontal" ? "16:9" : "9:16";
 }
 
-function runwayAspectRatio(format?: "vertical" | "horizontal" | null): "16:9" | "9:16" | "1:1" {
+function boxAspectRatio(format?: "vertical" | "horizontal" | null): "16:9" | "9:16" | "1:1" {
   if (format === "horizontal") return "16:9";
   if (format === "vertical") return "9:16";
   return "1:1";
@@ -69,7 +70,7 @@ async function startRunway(input: MediaInput): Promise<MediaPollResult> {
   // prefer Router configId (new path); fallback to model only for legacy configs that lack configId
   const configId = input.configId?.trim() || null;
   const prompt = input.task === "image" ? input.prompt.slice(0, 5000) : input.prompt;
-  const aspectRatio = runwayAspectRatio(input.format);
+  const aspectRatio = boxAspectRatio(input.format);
   try {
     if (input.task === "image") {
       if (!configId) throw new Error(`Runway Router configId is required for image (store in Settings → AI Providers → Runway configId, e.g. "preview-fast"). Legacy model "${input.model}" is no longer routed via v1/text_to_image`);
@@ -219,6 +220,29 @@ async function pollVertex(input: MediaInput, operation: string): Promise<MediaPo
   throw new Error("Vertex Veo completed without a video output");
 }
 
+// ponytail: OpenRouter /images is synchronous — b64_json returned inline (can take 60-90s)
+async function startOpenRouter(input: MediaInput): Promise<MediaPollResult> {
+  if (!input.apiKey) throw new Error("OpenRouter API key is required (store in Settings → AI Providers)");
+  if (input.task !== "image") throw new Error("OpenRouter supports image generation only — use Runway, Vertex or Luma for video");
+  const base = (input.baseUrl || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
+  const body: Record<string, unknown> = {
+    model: input.model,
+    prompt: input.prompt.slice(0, 5000),
+    aspect_ratio: boxAspectRatio(input.format),
+  };
+  if (input.inputUrl) body.input_references = [{ type: "image_url", image_url: { url: input.inputUrl } }];
+  const result = await providerJson(`${base}/images`, {
+    method: "POST",
+    headers: jsonHeaders({ Authorization: `Bearer ${input.apiKey}` }),
+    body: JSON.stringify(body),
+  });
+  const image = result?.data?.[0];
+  const url = image?.url ?? image?.image_url?.url;
+  if (url) return { status: "completed", outputUrl: String(url) };
+  if (!image?.b64_json) throw new Error("OpenRouter returned no image output");
+  return { status: "completed", outputUrl: `data:${image.media_type ?? "image/png"};base64,${image.b64_json}` };
+}
+
 async function startLuma(input: MediaInput): Promise<MediaPollResult> {
   if (!input.apiKey) throw new Error("Luma API key is required");
   const body: Record<string, unknown> = { prompt: input.prompt, model: input.model, aspect_ratio: ratio(input.format) };
@@ -251,6 +275,7 @@ async function pollLuma(input: MediaInput, id: string): Promise<MediaPollResult>
 export async function startMedia(input: MediaInput): Promise<MediaPollResult> {
   if (input.provider === "runway") return startRunway(input);
   if (input.provider === "vertex") return startVertex(input);
+  if (input.provider === "openrouter") return startOpenRouter(input);
   if (input.provider === "luma") return startLuma(input);
   throw new Error(`${input.provider} does not have a media generation adapter`);
 }
@@ -258,6 +283,7 @@ export async function startMedia(input: MediaInput): Promise<MediaPollResult> {
 export async function pollMedia(input: MediaInput, providerTaskId: string): Promise<MediaPollResult> {
   if (input.provider === "runway") return pollRunway(input, providerTaskId);
   if (input.provider === "vertex") return pollVertex(input, providerTaskId);
+  if (input.provider === "openrouter") throw new Error("OpenRouter image generation completes synchronously — job should not need polling");
   if (input.provider === "luma") return pollLuma(input, providerTaskId);
   throw new Error(`${input.provider} does not have a media generation adapter`);
 }
