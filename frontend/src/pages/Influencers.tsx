@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { useCompany } from '@/context/CompanyContext'
 import { deleteInfluencer, listInfluencers, type InfluencerRow } from '@/services/influencers'
 import AddInfluencerDialog from '@/components/influencer/AddInfluencerDialog'
+import EditInfluencerDialog from '@/components/influencer/EditInfluencerDialog'
 
 export default function InfluencersPage() {
   const { selectedId } = useCompany()
@@ -12,6 +13,7 @@ export default function InfluencersPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [editTarget, setEditTarget] = useState<InfluencerRow | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<InfluencerRow | null>(null)
 
   const load = async () => {
@@ -70,23 +72,24 @@ export default function InfluencersPage() {
       ) : (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
           {items.map((inf) => (
-            <div key={inf.id} className="overflow-hidden rounded-xl border bg-card">
+            <button key={inf.id} type="button" onClick={() => setEditTarget(inf)} className="overflow-hidden rounded-xl border bg-card text-left transition hover:border-primary/15 hover:shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40">
               <img src={inf.imageUrl} alt={inf.name} className="aspect-video w-full object-cover" loading="lazy" />
               <div className="flex items-center justify-between gap-2 p-3">
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium">{inf.name}</div>
                   <div className="text-xs text-muted-foreground capitalize">{inf.source}</div>
                 </div>
-                <Button variant="ghost" size="icon" aria-label="Delete" onClick={() => setDeleteTarget(inf)}>
+                <Button variant="ghost" size="icon" aria-label="Delete" onClick={(e) => { e.stopPropagation(); setDeleteTarget(inf) }}>
                   <Trash2 className="size-4" />
                 </Button>
               </div>
-            </div>
+            </button>
           ))}
         </div>
       )}
 
       <AddInfluencerDialog open={dialogOpen} onOpenChange={setDialogOpen} onCreated={handleCreated} />
+      <EditInfluencerDialog open={editTarget !== null} onOpenChange={(v) => { if (!v) setEditTarget(null) }} target={editTarget} onSaved={(row) => setItems((prev) => prev.map((x) => x.id === row.id ? row : x))} />
 
       <Dialog open={deleteTarget !== null} onOpenChange={(v) => { if (!v) setDeleteTarget(null) }}>
         <DialogContent className="sm:max-w-sm">

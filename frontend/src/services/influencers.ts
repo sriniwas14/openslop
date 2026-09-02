@@ -52,6 +52,24 @@ export function createInfluencer(
   }).then(handle<InfluencerRow>)
 }
 
+export function editPreviewInfluencer(id: string, body: { prompt: string }): Promise<{ previewUrl: string; prompt: string }> {
+  return fetch(`/influencers/${id}/edit-preview`, {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(handle<{ previewUrl: string; prompt: string }>)
+}
+
+export function updateInfluencer(id: string, body: { name?: string; imageUrl?: string; prompt?: string }): Promise<InfluencerRow> {
+  return fetch(`/influencers/${id}`, {
+    method: 'PATCH',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  }).then(handle<InfluencerRow>)
+}
+
 export function deleteInfluencer(id: string): Promise<{ success: boolean }> {
   return fetch(`/influencers/${id}`, { method: 'DELETE', credentials: 'include' }).then(handle<{ success: boolean }>)
 }

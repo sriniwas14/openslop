@@ -11,11 +11,13 @@ import { createMediaJob, pollMediaJob } from "../media/media.service";
 import {
   companyIdParamsSchema,
   createInfluencerSchema,
+  editPreviewSchema,
   errorResponseSchema,
   influencerIdParamsSchema,
   influencerResponseSchema,
   previewInfluencerSchema,
   previewResponseSchema,
+  updateInfluencerSchema,
 } from "./influencer.schemas";
 import { INFLUENCER_SYSTEM_PROMPT } from '../../../data/prompts/image'
 
@@ -246,6 +248,115 @@ export async function influencerRoutes(app: FastifyInstance) {
       updatedAt: now,
     } as any).returning();
     return { ...row, attributes: row.attributes ? JSON.parse(row.attributes) : null } as any;
+  });
+
+  r.post("/influencers/:id/edit-preview", {
+    preHandler: requireSession,
+    schema: { params: influencerIdParamsSchema, body: editPreviewSchema, response: { 200: previewResponseSchema, 400: errorResponseSchema, 404: errorResponseSchema, 502: errorResponseSchema } },
+  }, async (request, reply) => {
+    if (!request.session) return;
+    await ensureTable();
+    const [existing] = await db.select().from(influencers).where(and(eq(influencers.id, request.params.id), eq(influencers.userId, request.session.user.id)));
+    if (!existing) return reply.status(404).send({ error: "Not found" } as any);
+    const userPrompt = (request.body as any).prompt?.trim()
+    if (!userPrompt) return reply.status(400).send({ error: "prompt required" } as any);
+    // preserve face unless explicitly asked to change — use base image as reference
+    const basePrompt = existing.prompt ?? buildPrompt(existing.attributes ? JSON.parse(existing.attributes as any) : {}, undefined);
+    const editPrompt = `${basePrompt}\n\nEdit instruction: ${userPrompt}. Keep same person and identity, preserve facial identity and proportions, neutral studio background, 16:9, front+profile split, unless explicitly asked to change face.`
+    const baseImageUrl = existing.imageUrl;
+    // try to resolve to absolute URL for providers that need http/data uri
+    let inputUrl: string | null = baseImageUrl;
+    if (baseImageUrl.startsWith("/media/files/")) {
+      // for local preview reuse, pass as is — media service will handle, provider will fetch if needed
+      // ponytail: keep relative, providers that need absolute will fetch via http if we pass full origin — leave relative and let provider handle text-only fallback
+      inputUrl = baseImageUrl;
+    }
+    let job: any = null;
+    try {
+      // include company scope from existing row for media job
+      job = await createMediaJob({
+        userId: request.session.user.id,
+        companyId: existing.companyId,
+        contentId: null,
+        task: "image",
+        prompt: editPrompt.slice(0, 5000),
+        inputUrl,
+        format: "horizontal" as any,
+      });
+      let outputUrl: string | null = null;
+      for (let i = 0; i < 150; i++) {
+        const fresh = await pollMediaJob(job.id);
+        if (fresh.status === "completed" && fresh.outputUrl) { outputUrl = fresh.outputUrl; break; }
+        if (fresh.status === "failed") throw new Error(fresh.error || "image generation failed");
+        await new Promise(r => setTimeout(r, 1000));
+      }
+      if (!outputUrl) throw new Error("image generation timed out — try again");
+      let previewUrl = outputUrl;
+      try {
+        if (!outputUrl.startsWith("data:")) {
+          const dir = mediaDir(); await mkdir(dir, { recursive: true });
+          const filename = `influencer_edit_${Date.now()}.png`;
+          const fp = path.join(dir, filename);
+          if (outputUrl.startsWith("http")) {
+            const res = await fetch(outputUrl);
+            if (res.ok) { await writeFile(fp, Buffer.from(await res.arrayBuffer())); previewUrl = `/media/files/${filename}`; }
+          } else if (outputUrl.startsWith("data:")) {
+            const m = outputUrl.match(/^data:[^;]+;base64,(.*)$/);
+            if (m) { await writeFile(fp, Buffer.from(m[1], "base64")); previewUrl = `/media/files/${filename}`; }
+          }
+        } else {
+          const dir = mediaDir(); await mkdir(dir, { recursive: true });
+          const filename = `influencer_edit_${Date.now()}.png`;
+          const fp = path.join(dir, filename);
+          const m = outputUrl.match(/^data:[^;]+;base64,(.*)$/);
+          if (m) { await writeFile(fp, Buffer.from(m[1], "base64")); previewUrl = `/media/files/${filename}`; }
+        }
+      } catch {}
+      return { previewUrl, prompt: editPrompt } as any;
+    } catch (e: any) {
+      const msg = String(e?.message ?? "edit failed");
+      if (msg.includes("Configure")) return reply.status(400).send({ error: msg } as any);
+      return reply.status(502).send({ error: msg.slice(0, 2000) } as any);
+    }
+  });
+
+  r.patch("/influencers/:id", {
+    preHandler: requireSession,
+    schema: { params: influencerIdParamsSchema, body: updateInfluencerSchema, response: { 200: influencerResponseSchema, 400: errorResponseSchema, 404: errorResponseSchema } },
+  }, async (request, reply) => {
+    if (!request.session) return;
+    await ensureTable();
+    const [existing] = await db.select().from(influencers).where(and(eq(influencers.id, request.params.id), eq(influencers.userId, request.session.user.id)));
+    if (!existing) return reply.status(404).send({ error: "Not found" } as any);
+    const body = request.body as any;
+    let imageUrl = existing.imageUrl;
+    if (body.imageUrl) {
+      if (body.imageUrl.startsWith("/media/files/")) {
+        imageUrl = body.imageUrl;
+      } else if (body.imageUrl.startsWith("http") || body.imageUrl.startsWith("data:")) {
+        try {
+          if (body.imageUrl.startsWith("data:")) {
+            imageUrl = await saveDataUri(body.imageUrl, body.name ?? existing.name);
+          } else {
+            const dir = mediaDir(); await mkdir(dir, { recursive: true });
+            const filename = `influencer_${Date.now()}.png`;
+            const fp = path.join(dir, filename);
+            const res = await fetch(body.imageUrl);
+            if (!res.ok) throw new Error("failed to fetch imageUrl");
+            await writeFile(fp, Buffer.from(await res.arrayBuffer()));
+            imageUrl = `/media/files/${filename}`;
+          }
+        } catch { imageUrl = body.imageUrl; }
+      } else {
+        imageUrl = body.imageUrl;
+      }
+    }
+    const now = new Date().toISOString();
+    const patch: any = { updatedAt: now, imageUrl };
+    if (body.name) patch.name = body.name;
+    if (body.prompt) patch.prompt = body.prompt;
+    const [row] = await db.update(influencers).set(patch).where(and(eq(influencers.id, request.params.id), eq(influencers.userId, request.session.user.id))).returning();
+    return { ...row, attributes: row.attributes ? JSON.parse(row.attributes as any) : null } as any;
   });
 
   r.delete("/influencers/:id", {
