@@ -24,6 +24,7 @@ export type AiConfig = {
   projectId: string | null
   location: string | null
   model: string | null
+  configId: string | null
   name: string | null
   isDefault: boolean
   createdAt: string
@@ -42,7 +43,7 @@ export function listAiConfigs(): Promise<AiConfig[]> {
   return fetch('/ai/configs', { credentials: 'include' }).then(handle<AiConfig[]>)
 }
 
-export function createAiConfig(body: { provider: AiProvider; apiKey?: string; serviceAccountJson?: string; baseUrl?: string; projectId?: string; location?: string; model?: string; name?: string; isDefault?: boolean }): Promise<AiConfig> {
+export function createAiConfig(body: { provider: AiProvider; apiKey?: string; serviceAccountJson?: string; baseUrl?: string; projectId?: string; location?: string; model?: string; configId?: string; name?: string; isDefault?: boolean }): Promise<AiConfig> {
   return fetch('/ai/configs', {
     method: 'POST',
     credentials: 'include',
@@ -51,7 +52,7 @@ export function createAiConfig(body: { provider: AiProvider; apiKey?: string; se
   }).then(handle<AiConfig>)
 }
 
-export function updateAiConfig(id: string, body: Partial<{ provider: AiProvider; apiKey: string; serviceAccountJson: string; baseUrl: string; projectId: string; location: string; model: string; name: string; isDefault: boolean }>): Promise<AiConfig> {
+export function updateAiConfig(id: string, body: Partial<{ provider: AiProvider; apiKey: string; serviceAccountJson: string; baseUrl: string; projectId: string; location: string; model: string; configId: string; name: string; isDefault: boolean }>): Promise<AiConfig> {
   return fetch(`/ai/configs/${id}`, {
     method: 'PATCH',
     credentials: 'include',
@@ -132,6 +133,10 @@ export function listMediaJobs(contentId: string): Promise<MediaJob[]> {
   return fetch(`/contents/${contentId}/media-jobs`, { credentials: 'include' }).then(handle<MediaJob[]>)
 }
 
+export function getMediaJob(id: string): Promise<MediaJob> {
+  return fetch(`/media/jobs/${id}`, { credentials: 'include' }).then(handle<MediaJob>)
+}
+
 export function listModels(params: { provider: AiProvider; task?: ModelTask; configId?: string; apiKey?: string; baseUrl?: string; q?: string }): Promise<ModelOption[]> {
   const sp = new URLSearchParams({ provider: params.provider })
   if (params.task) sp.set('task', params.task)
@@ -165,4 +170,63 @@ export async function generateContent(body: { type: string; companyId: string })
     throw new Error(message)
   }
   return res.json() as Promise<GeneratedContent>
+}
+
+export type UgcContent = {
+  title: string
+  hook: string
+  caption: string
+  hashtags: string[]
+  platforms: string[]
+  aiScore: number
+  sourcePostId: string
+}
+
+export async function generateUgcPost(body: { companyId: string; postId: string }): Promise<UgcContent> {
+  const res = await fetch('/ai/generate-ugc', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    let message = res.statusText
+    try {
+      const parsed = JSON.parse(await res.text())
+      if (parsed?.error) message = parsed.error
+    } catch {}
+    throw new Error(message)
+  }
+  return res.json() as Promise<UgcContent>
+}
+
+async function parseError(res: Response): Promise<Error> {
+  let message = res.statusText
+  try {
+    const parsed = JSON.parse(await res.text())
+    if (parsed?.error) message = parsed.error
+  } catch {}
+  return new Error(message)
+}
+
+export async function generateUgcImage(body: { companyId: string; hook: string; postId?: string }): Promise<MediaJob> {
+  const res = await fetch('/ai/generate-ugc/image', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw await parseError(res)
+  return res.json() as Promise<MediaJob>
+}
+
+export async function baseUgcImage(body: { jobId: string }): Promise<{ imageUrl: string }> {
+  const res = await fetch('/ai/generate-ugc/image/base', {
+    method: 'POST',
+    credentials: 'include',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) throw await parseError(res)
+  return res.json() as Promise<{ imageUrl: string }>
 }

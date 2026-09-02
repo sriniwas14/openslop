@@ -27,40 +27,35 @@ export default function CardsView({
                 onSelect(item)
               }
             }}
-            className="mb-4 break-inside-avoid cursor-pointer outline-none"
+            className="group mb-4 break-inside-avoid cursor-pointer outline-none"
           >
-            <div
-              className={cn(
-                'group relative overflow-hidden rounded-xl border bg-card shadow-xs outline-none transition-all hover:shadow-md focus-visible:ring-3 focus-visible:ring-ring/50',
-                isHorizontal ? 'aspect-[16/9]' : 'aspect-[9/16]',
+            <div className="overflow-hidden rounded-xl border bg-card transition-colors outline-none group-hover:border-foreground/20 group-focus-visible:ring-3 group-focus-visible:ring-ring/50">
+              {/* media area — generated media or quiet monochrome placeholder */}
+              {item.mediaUrl ? (
+                item.type === 'carousel' ? (
+                  <img src={item.mediaUrl} alt="" className={cn('w-full object-cover', isHorizontal ? 'aspect-[16/9]' : 'aspect-[4/5]')} />
+                ) : (
+                  <video src={item.mediaUrl} muted playsInline className={cn('w-full object-cover', isHorizontal ? 'aspect-[16/9]' : 'aspect-[4/5]')} />
+                )
+              ) : (
+                <div className={cn('grid w-full place-items-center border-b bg-muted/40', isHorizontal ? 'aspect-[16/9]' : 'aspect-[4/5]')}>
+                  <Icon className="size-8 text-foreground/35" strokeWidth={1.5} />
+                </div>
               )}
-            >
-              {/* default no-image placeholder — gradient like reel/tiktok */}
-              <div className={cn('absolute inset-0 bg-gradient-to-br', meta.gradient)} />
-              <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(255,255,255,.18),transparent_50%)]" />
-              <div className="absolute inset-0 grid place-items-center">
-                <Icon className="size-10 text-white/80 drop-shadow-sm sm:size-12" strokeWidth={1.5} />
-              </div>
-              {/* scrim for legibility */}
-              <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/15 to-transparent" />
 
-              {/* top badges */}
-              <div className="absolute top-2 left-2 flex items-center gap-1.5">
-                <StatusBadge status={item.status} className="shadow-xs backdrop-blur-sm" />
-              </div>
-              <div className="absolute top-2 right-2">
-                <AiScorePill score={item.aiScore} className="shadow-xs" />
-              </div>
-
-              {/* bottom overlay — tiktok style */}
-              <div className="absolute inset-x-0 bottom-0 p-3">
-                <div className="line-clamp-2 text-sm font-semibold leading-snug text-white drop-shadow-sm">{item.title}</div>
-                <div className="mt-1 line-clamp-1 text-xs text-white/75">{item.summary}</div>
-                <div className="mt-2 flex items-center justify-between gap-2">
-                  <span className="text-xs tabular-nums text-white/60">{formatDate(item.scheduledAt)}</span>
-                  <span className="inline-flex items-center gap-1 text-xs text-white/70">
+              {/* info */}
+              <div className="grid gap-2 p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <StatusBadge status={item.status} />
+                  <AiScorePill score={item.aiScore} />
+                </div>
+                <div className="line-clamp-2 text-sm leading-snug font-medium">{item.title}</div>
+                <div className="line-clamp-1 text-xs text-muted-foreground">{item.summary}</div>
+                <div className="flex items-center justify-between gap-2 border-t pt-2 text-xs text-muted-foreground">
+                  <span className="tabular-nums">{formatDate(item.scheduledAt)}</span>
+                  <span className="inline-flex items-center gap-1">
                     {item.platforms.slice(0, 2).map((p) => (
-                      <span key={p} className="rounded-full bg-white/15 px-1.5 py-0.5 text-[10px] leading-none">{p}</span>
+                      <span key={p} className="rounded-full border px-1.5 py-0.5 text-[10px] leading-none">{p}</span>
                     ))}
                   </span>
                 </div>

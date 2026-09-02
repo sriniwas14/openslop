@@ -64,6 +64,7 @@ export const postResponseSchema = z.object({
   mentions: z.array(z.string()),
   source: z.string(),
   scrapedAt: z.string().nullable(),
+  savedAt: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });

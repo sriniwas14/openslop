@@ -31,10 +31,12 @@ function inputForJob(job: any, config: any): MediaInput {
     serviceAccountJson: config.serviceAccountJson,
     projectId: config.projectId,
     location: config.location,
+    baseUrl: config.baseUrl,
     task: job.task,
     prompt: job.prompt,
     inputUrl: job.inputUrl,
     format: job.format ?? null,
+    configId: (config as any).configId ?? (job as any).routerConfigId ?? null,
   };
 }
 
@@ -67,6 +69,10 @@ async function attachOutput(job: any, outputUrl: string) {
 export async function submitMediaJob(jobId: string) {
   const [job] = await db.select().from(mediaJobs).where(eq(mediaJobs.id, jobId));
   if (!job || job.status === "completed" || job.status === "failed") return job;
+  // ponytail: slow sync providers (OpenRouter /images) keep status "queued" while in
+  // flight — without this guard the 10s worker re-submits and double-bills
+  if (inFlightSubmissions.has(jobId)) return job;
+  inFlightSubmissions.add(jobId);
   try {
     const config = await loadJobConfig(job);
     const result = await startMedia(inputForJob(job, config));
@@ -85,6 +91,8 @@ export async function submitMediaJob(jobId: string) {
       error: String(error?.message ?? "media submission failed").slice(0, 2000),
       attempts: String(Number(job.attempts ?? 0) + 1),
     });
+  } finally {
+    inFlightSubmissions.delete(jobId);
   }
 }
 
@@ -123,8 +131,14 @@ export async function createMediaJob(input: {
   configId?: string | null;
 }) {
   const { config, model } = await getMediaConfig(input.userId, input.task, input.configId);
-  if (!["runway", "vertex", "luma"].includes(config.provider)) {
-    throw new Error(`${config.provider} does not support media generation`);
+  const mediaProviders = ["runway", "vertex", "luma"];
+  const isOpenRouterImage = config.provider === "openrouter" && input.task === "image";
+  if (!mediaProviders.includes(config.provider) && !isOpenRouterImage) {
+    throw new Error(
+      config.provider === "openrouter"
+        ? "OpenRouter supports image generation only — set a Runway, Vertex or Luma provider for video in Settings → AI Providers"
+        : `${config.provider} does not support media generation`,
+    );
   }
   const now = new Date().toISOString();
   const [job] = await db.insert(mediaJobs).values({
@@ -139,6 +153,7 @@ export async function createMediaJob(input: {
     inputUrl: input.inputUrl ?? null,
     format: input.format ?? null,
     outputIndex: input.outputIndex == null ? null : String(input.outputIndex),
+    routerConfigId: (config as any).configId ?? null,
     status: "queued",
     attempts: "0",
     createdAt: now,
@@ -156,6 +171,7 @@ export async function queueContentMedia(input: {
   images?: Array<{ url: string; text: string }> | null;
   scripts?: Array<{ type: string; prompt: string }> | null;
   format?: MediaFormat;
+  influencerImageUrl?: string | null;
 }) {
   const task: MediaTask = input.kind === "carousel" ? "image" : "video";
   const jobs: any[] = [];
@@ -175,7 +191,7 @@ export async function queueContentMedia(input: {
         ...input,
         task,
         prompt: input.scripts.map((script, index) => `Beat ${index + 1} (${script.type}): ${script.prompt}`).join("\n\n"),
-        inputUrl: null,
+        inputUrl: input.influencerImageUrl ?? null,
         outputIndex: null,
       }));
     }
@@ -188,6 +204,7 @@ export async function queueContentMedia(input: {
 
 let workerTimer: ReturnType<typeof setInterval> | null = null;
 let workerBusy = false;
+const inFlightSubmissions = new Set<string>();
 
 export function startMediaWorker() {
   if (workerTimer) return () => {};

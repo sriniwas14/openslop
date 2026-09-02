@@ -10,6 +10,7 @@ export default defineConfig({
     proxy: {
       '/api': 'http://localhost:3000',
       '/companies': 'http://localhost:3000',
+      '/influencers': 'http://localhost:3000',
       '/contents': 'http://localhost:3000',
       '/media': 'http://localhost:3000',
       '/ai': 'http://localhost:3000',

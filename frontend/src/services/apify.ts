@@ -44,6 +44,7 @@ export type InstagramPost = {
   mentions: string[]
   source: string
   scrapedAt: string | null
+  savedAt: string | null
   createdAt: string
   updatedAt: string
 }
@@ -116,4 +117,33 @@ export function scrapePosts(creator: string, resultsLimit: number, companyId?: s
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ creator, resultsLimit }),
   }).then(handle<ScrapeResult>)
+}
+
+// ---------- All scraped posts (Trending view) ----------
+export function listAllPosts(companyId?: string, limit?: number): Promise<InstagramPost[]> {
+  const sp = new URLSearchParams()
+  if (companyId) sp.set('companyId', companyId)
+  if (limit) sp.set('limit', String(limit))
+  const qs = sp.toString() ? `?${sp.toString()}` : ''
+  return fetch(`/api/integrations/instagram/posts${qs}`, { credentials: 'include' }).then(handle<InstagramPost[]>)
+}
+
+// ---------- Saved posts (UGC inspiration library) ----------
+export function listSavedPosts(companyId?: string): Promise<InstagramPost[]> {
+  const qs = companyId ? `?companyId=${encodeURIComponent(companyId)}` : ''
+  return fetch(`/api/integrations/instagram/saved${qs}`, { credentials: 'include' }).then(handle<InstagramPost[]>)
+}
+
+export function savePost(postId: string): Promise<InstagramPost> {
+  return fetch(`/api/integrations/instagram/posts/${postId}/save`, {
+    method: 'POST',
+    credentials: 'include',
+  }).then(handle<InstagramPost>)
+}
+
+export function unsavePost(postId: string): Promise<InstagramPost> {
+  return fetch(`/api/integrations/instagram/posts/${postId}/save`, {
+    method: 'DELETE',
+    credentials: 'include',
+  }).then(handle<InstagramPost>)
 }

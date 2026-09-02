@@ -3,7 +3,7 @@ import { z } from "zod";
 import { and, desc, eq } from "drizzle-orm";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { db } from "../../lib/db";
-import { companies, contents } from "../../db/schema";
+import { companies, contents, influencers } from "../../db/schema";
 import { requireSession } from "../../plugins/auth";
 import { resolveUserModel } from "../company/company.workflow";
 import { queueContentMedia } from "../media/media.service";
@@ -58,6 +58,7 @@ const createContentBodySchema = z
     scripts: z.array(scriptSchema).max(50).optional(),
     format: z.enum(["vertical", "horizontal"]).optional(),
     duration: z.number().int().refine((v) => [15, 30, 45].includes(v), { message: "duration must be 15, 30 or 45" }).optional(),
+    influencerId: z.string().min(1).optional(),
     scheduledAt: z.string().datetime({ offset: true }).nullable().optional(),
   })
   .superRefine((v: any, ctx: any) => {
@@ -66,14 +67,41 @@ const createContentBodySchema = z
       if (v.scripts) ctx.addIssue({ code: "custom", path: ["scripts"], message: "scripts not allowed for carousel" });
       if (v.format) ctx.addIssue({ code: "custom", path: ["format"], message: "format not allowed for carousel" });
       if (v.duration) ctx.addIssue({ code: "custom", path: ["duration"], message: "duration not allowed for carousel" });
+      if (v.influencerId) ctx.addIssue({ code: "custom", path: ["influencerId"], message: "influencer not allowed for carousel" });
     }
     if ((["talkinghead", "greenscreen"] as readonly string[]).includes(v.kind)) {
       if (!v.scripts || v.scripts.length === 0) ctx.addIssue({ code: "custom", path: ["scripts"], message: "scripts required for talkinghead/greenscreen" });
       if (!v.format) ctx.addIssue({ code: "custom", path: ["format"], message: "format required for talkinghead/greenscreen" });
       if (!v.duration) ctx.addIssue({ code: "custom", path: ["duration"], message: "duration required for video types" });
       if (v.images) ctx.addIssue({ code: "custom", path: ["images"], message: "images not allowed for video types" });
+      if (v.kind === "talkinghead" && !v.influencerId) ctx.addIssue({ code: "custom", path: ["influencerId"], message: "influencer required for talkinghead" });
     }
   });
+
+// ponytail: convert influencer imageUrl (/media/files/...) or remote to resized 720p data:image for Runway referenceImages
+async function influencerToDataUri(influencerId: string, userId: string, companyId: string): Promise<string | null> {
+  const [inf] = await db.select().from(influencers).where(and(eq(influencers.id, influencerId), eq(influencers.userId, userId), eq(influencers.companyId, companyId)));
+  if (!inf) return null;
+  const url = inf.imageUrl;
+  try {
+    const { toResizedDataUri } = await import("../../lib/image");
+    if (url.startsWith("data:")) {
+      return toResizedDataUri(Buffer.from(url.slice(url.indexOf(",") + 1), "base64"));
+    }
+    if (url.startsWith("/media/files/")) {
+      const path = await import("node:path");
+      const { readFile } = await import("node:fs/promises");
+      const buf = await readFile(path.join(process.cwd(), "data", "media", url.replace("/media/files/", "")));
+      return toResizedDataUri(buf);
+    }
+    if (url.startsWith("http")) {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      return toResizedDataUri(Buffer.from(await res.arrayBuffer()));
+    }
+    return null;
+  } catch { return null; }
+}
 
 export async function contentRoutes(app: FastifyInstance) {
   const r = app.withTypeProvider<ZodTypeProvider>();
@@ -104,6 +132,7 @@ export async function contentRoutes(app: FastifyInstance) {
       } catch (e: any) {
         if (String(e?.message ?? "").includes("no such column")) {
           try { await db.run(`ALTER TABLE content ADD COLUMN duration TEXT` as any); } catch {}
+          try { await db.run(`ALTER TABLE content ADD COLUMN influencer_id TEXT` as any); } catch {}
           rows = await db.select().from(contents).where(where).orderBy(desc(contents.createdAt));
         } else throw e;
       }
@@ -129,6 +158,12 @@ export async function contentRoutes(app: FastifyInstance) {
       const full = { ...(request.body as any), companyId: request.params.companyId };
       const parsed = createContentSchema.safeParse(full);
       if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues[0]?.message ?? "validation failed" } as any);
+      // influencer required for talkinghead
+      let influencerDataUri: string | null = null;
+      if ((parsed.data as any).influencerId) {
+        influencerDataUri = await influencerToDataUri((parsed.data as any).influencerId, request.session!.user.id, request.params.companyId);
+        if (!influencerDataUri) return reply.status(400).send({ error: "influencer not found or image unavailable" } as any);
+      }
       const data = serializeContentInput(parsed.data);
       const [row] = await db
         .insert(contents)
@@ -143,11 +178,12 @@ export async function contentRoutes(app: FastifyInstance) {
           mediaUrl: null,
           format: data.format as any,
           duration: (data as any).duration as any,
+          influencerId: (data as any).influencerId as any,
           scheduledAt: data.scheduledAt as any,
-        })
+        } as any)
         .returning();
       const parsedRow = parseContentRow(row as any) as any;
-      void queueContentMedia({ userId: request.session!.user.id, companyId: request.params.companyId, contentId: row.id, kind: row.kind, images: parsedRow.images, scripts: parsedRow.scripts, format: row.format as any });
+      void queueContentMedia({ userId: request.session!.user.id, companyId: request.params.companyId, contentId: row.id, kind: row.kind, images: parsedRow.images, scripts: parsedRow.scripts, format: row.format as any, influencerImageUrl: influencerDataUri });
       return reply.status(201).send(parsedRow);
     },
   );
@@ -208,10 +244,12 @@ export async function contentRoutes(app: FastifyInstance) {
         scripts: patch.scripts !== undefined ? patch.scripts : existingParsed.scripts,
         format: patch.format !== undefined ? patch.format : existingParsed.format,
         duration: patch.duration !== undefined ? patch.duration : (existingParsed as any).duration,
+        influencerId: patch.influencerId !== undefined ? patch.influencerId : (existingParsed as any).influencerId,
         scheduledAt: patch.scheduledAt !== undefined ? patch.scheduledAt : (existing as any).scheduledAt,
       };
       if (merged.scheduledAt === null) merged.scheduledAt = null;
       if (merged.duration === null) delete merged.duration;
+      if (merged.influencerId === null) delete merged.influencerId;
       // normalize nulls to undefined for zod
       if (merged.images === null) delete merged.images;
       if (merged.scripts === null) delete merged.scripts;
@@ -227,6 +265,7 @@ export async function contentRoutes(app: FastifyInstance) {
       if (patch.companyId !== undefined) serialized.companyId = patch.companyId;
       if (patch.format !== undefined) serialized.format = patch.format;
       if (patch.duration !== undefined) serialized.duration = String(patch.duration);
+      if (patch.influencerId !== undefined) serialized.influencerId = patch.influencerId ?? null;
       if (patch.images !== undefined) serialized.images = patch.images ? JSON.stringify(patch.images) : null;
       if (patch.scripts !== undefined) serialized.scripts = patch.scripts ? JSON.stringify(patch.scripts) : null;
       if (patch.scheduledAt !== undefined) serialized.scheduledAt = patch.scheduledAt ? new Date(patch.scheduledAt).toISOString() : null;
@@ -469,12 +508,23 @@ export async function contentRoutes(app: FastifyInstance) {
           if (!validatedScripts.success || validatedScripts.data.length === 0) throw new Error(validatedScripts.error?.issues[0]?.message || "no valid scripts");
           const dur = duration ?? 15;
           if (![15, 30, 45].includes(dur as number)) throw new Error("duration must be 15, 30 or 45");
-          full = { companyId: request.params.companyId, kind: finalKind, title: outTitle, scripts: validatedScripts.data, format, duration: dur };
+          const influencerId = (body as any).influencerId as string | undefined;
+          if (finalKind === "talkinghead" && !influencerId) throw new Error("influencer required for talkinghead");
+          if (influencerId) {
+            const [inf] = await db.select().from(influencers).where(and(eq(influencers.id, influencerId), eq(influencers.userId, request.session!.user.id), eq(influencers.companyId, request.params.companyId)));
+            if (!inf) throw new Error("influencer not found");
+          }
+          full = { companyId: request.params.companyId, kind: finalKind, title: outTitle, scripts: validatedScripts.data, format, duration: dur, influencerId: influencerId ?? undefined };
         }
 
         const v = createContentSchema.safeParse(full);
         if (!v.success) throw new Error(v.error.issues[0]?.message);
         const data = serializeContentInput(v.data);
+        let influencerDataUri: string | null = null;
+        if ((data as any).influencerId) {
+          influencerDataUri = await influencerToDataUri((data as any).influencerId, request.session!.user.id, request.params.companyId);
+          if (!influencerDataUri) throw new Error("influencer image unavailable");
+        }
         const [row] = await db
           .insert(contents)
           .values({
@@ -488,10 +538,11 @@ export async function contentRoutes(app: FastifyInstance) {
             mediaUrl: null,
             format: data.format as any,
             duration: (data as any).duration as any,
-          })
+            influencerId: (data as any).influencerId as any,
+          } as any)
           .returning();
         const parsedRow = parseContentRow(row as any) as any;
-        void queueContentMedia({ userId: request.session!.user.id, companyId: request.params.companyId, contentId: row.id, kind: row.kind, images: parsedRow.images, scripts: parsedRow.scripts, format: row.format as any });
+        void queueContentMedia({ userId: request.session!.user.id, companyId: request.params.companyId, contentId: row.id, kind: row.kind, images: parsedRow.images, scripts: parsedRow.scripts, format: row.format as any, influencerImageUrl: influencerDataUri });
         return reply.status(201).send(parsedRow);
       } catch (e: any) {
         request.log.warn({ err: e }, "could not parse script JSON");

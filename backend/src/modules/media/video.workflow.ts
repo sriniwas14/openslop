@@ -5,7 +5,7 @@ import { mkdir, writeFile, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { db } from "../../lib/db";
-import { contents, mediaJobs, aiConfigs, aiPreferences } from "../../db/schema";
+import { contents, mediaJobs, aiConfigs, aiPreferences, influencers } from "../../db/schema";
 import { createMediaJob, pollMediaJob } from "./media.service";
 
 // ponytail: local file storage — backend/data/media/<contentId>.mp4 served via /media/files/
@@ -70,7 +70,7 @@ async function concatVideos(partPaths: string[], outPath: string): Promise<void>
     await runFfmpeg(["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c", "copy", outPath]);
   } catch {
     // fallback re-encode if copy fails (different codecs)
-    await runFfmpeg(["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c:v", "libx264", "-preset", "fast", "-crf", "23", outPath]);
+    await runFfmpeg(["-y", "-f", "concat", "-safe", "0", "-i", listPath, "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-c:a", "aac", "-b:a", "128k", outPath]);
   } finally {
     try { await unlink(listPath); } catch {}
   }
@@ -103,10 +103,9 @@ function splitIntoChunks(scripts: Array<{ type: string; prompt: string }>, n: nu
 async function tryUploadToRunway(pngPath: string, apiKey: string): Promise<string | null> {
   try {
     const buf = await readFile(pngPath);
-    // Runway uploads endpoint: POST /v1/uploads with binary — per docs, not strictly needed but promptImage can be data URI for small images
-    // Try data URI first (cheaper, no extra call) — provider may accept it; we return data URI
-    const b64 = buf.toString("base64");
-    return `data:image/png;base64,${b64}`;
+    // ponytail: resize last frame to 720p jpeg — raw q:v2 PNG data URIs 413 the provider
+    const { toResizedDataUri } = await import("../../lib/image");
+    return await toResizedDataUri(buf);
   } catch { return null; }
 }
 
@@ -115,6 +114,29 @@ async function ensureDurationColumn() {
     // ponytail: existing DBs prior to duration column — add lazily
     await db.run(`ALTER TABLE content ADD COLUMN duration TEXT` as any);
   } catch {}
+  try { await db.run(`ALTER TABLE content ADD COLUMN influencer_id TEXT` as any); } catch {}
+}
+
+async function influencerToDataUri(influencerId: string, userId: string): Promise<string | null> {
+  try {
+    const [inf] = await db.select().from(influencers).where(and(eq(influencers.id, influencerId), eq(influencers.userId, userId)));
+    if (!inf) return null;
+    const url = inf.imageUrl;
+    const { toResizedDataUri } = await import("../../lib/image");
+    if (url.startsWith("data:")) {
+      return toResizedDataUri(Buffer.from(url.slice(url.indexOf(",") + 1), "base64"));
+    }
+    if (url.startsWith("/media/files/")) {
+      const buf = await readFile(path.join(process.cwd(), "data", "media", url.replace("/media/files/", "")));
+      return toResizedDataUri(buf);
+    }
+    if (url.startsWith("http")) {
+      const res = await fetch(url);
+      if (!res.ok) return null;
+      return toResizedDataUri(Buffer.from(await res.arrayBuffer()));
+    }
+    return null;
+  } catch { return null; }
 }
 
 const fetchContentStep = createStep({
@@ -129,6 +151,8 @@ const fetchContentStep = createStep({
     duration: z.number().int(),
     scripts: z.array(z.object({ type: z.string(), prompt: z.string() })),
     chunkPrompts: z.array(z.string()),
+    influencerId: z.string().nullable(),
+    influencerImageUrl: z.string().nullable(),
   }),
   execute: async ({ inputData }) => {
     let row: any;
@@ -157,6 +181,14 @@ const fetchContentStep = createStep({
     if (![15, 30, 45].includes(duration)) throw new Error(`invalid duration ${duration}`);
     const n = duration / 5;
     const chunkPrompts = splitIntoChunks(parsed, n);
+    const influencerId = (row as any).influencerId ?? (row as any).influencer_id ?? null;
+    let influencerImageUrl: string | null = null;
+    if (influencerId) {
+      influencerImageUrl = await influencerToDataUri(influencerId, row.userId);
+      if (!influencerImageUrl) throw new Error("influencer image unavailable — re-select influencer");
+    } else if (row.kind === "talkinghead") {
+      throw new Error("influencer required for talkinghead — select an influencer");
+    }
     return {
       contentId: row.id,
       userId: row.userId,
@@ -166,6 +198,8 @@ const fetchContentStep = createStep({
       duration,
       scripts: parsed,
       chunkPrompts,
+      influencerId,
+      influencerImageUrl,
     };
   },
 });
@@ -194,6 +228,8 @@ const chunkedRenderStep = createStep({
     format: z.string().nullable(),
     duration: z.number().int(),
     chunkPrompts: z.array(z.string()),
+    influencerId: z.string().nullable().optional(),
+    influencerImageUrl: z.string().nullable().optional(),
   }),
   outputSchema: z.object({ contentId: z.string(), mediaUrl: z.string().nullable(), parts: z.number() }),
   execute: async ({ inputData }) => {
@@ -225,7 +261,7 @@ const chunkedRenderStep = createStep({
     } catch {}
 
     const partPaths: string[] = [];
-    let lastFrameInput: string | null = null; // data URI of last frame PNG
+    let lastFrameInput: string | null = (inputData as any).influencerImageUrl ?? null; // influencer image for first chunk, then last frame
 
     for (let idx = 0; idx < inputData.chunkPrompts.length; idx++) {
       const prompt = inputData.chunkPrompts[idx];

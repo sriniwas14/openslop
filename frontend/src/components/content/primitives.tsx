@@ -11,7 +11,7 @@ import {
   type ViewMode,
 } from './data'
 
-/** Small gradient tile with the content-type icon — used as preview thumbnails. */
+/** Small monochrome tile with the content-type icon — used as preview thumbnails. */
 export function TypeIconBox({
   type,
   className,
@@ -26,7 +26,7 @@ export function TypeIconBox({
   return (
     <div
       className={cn(
-        'grid shrink-0 place-items-center rounded-lg bg-gradient-to-br text-white shadow-xs',
+        'grid shrink-0 place-items-center rounded-lg text-background',
         meta.gradient,
         className,
       )}
@@ -36,16 +36,14 @@ export function TypeIconBox({
   )
 }
 
-/** Large decorative preview used on cards and detail banners. */
+/** Quiet preview panel used on cards and detail banners. */
 export function TypePreview({ type, className }: { type: ContentType; className?: string }) {
   const meta = CONTENT_TYPES[type]
   const Icon = meta.icon
   return (
-    <div className={cn('relative overflow-hidden bg-gradient-to-br', meta.gradient, className)}>
-      <div className="absolute -top-8 -right-8 size-32 rounded-full bg-white/15" />
-      <div className="absolute -bottom-10 left-1/4 size-24 rounded-full bg-black/10" />
+    <div className={cn('relative overflow-hidden border-b bg-muted/40', className)}>
       <div className="absolute inset-0 grid place-items-center">
-        <Icon className="size-10 text-white/85 drop-shadow-sm" strokeWidth={1.5} />
+        <Icon className="size-10 text-foreground/40" strokeWidth={1.5} />
       </div>
     </div>
   )
@@ -125,11 +123,11 @@ export function ViewSwitcher({ value, onChange }: { value: ViewMode; onChange: (
           aria-selected={value === v}
           onClick={() => onChange(v)}
           className={cn(
-            'flex h-7 items-center gap-1.5 rounded-[7px] px-2.5 text-xs font-medium transition-all',
+            'flex h-8 items-center gap-1.5 rounded-[7px] px-3 text-xs font-medium transition-all',
             value === v ? 'bg-background text-foreground shadow-xs' : 'text-muted-foreground hover:text-foreground',
           )}
         >
-          <Icon className="size-3.5" />
+          <Icon className="size-4" />
           <span className="hidden sm:inline">{label}</span>
         </button>
       ))}

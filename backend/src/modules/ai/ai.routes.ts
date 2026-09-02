@@ -3,16 +3,21 @@ import { z } from "zod";
 import { and, desc, eq } from "drizzle-orm";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { db } from "../../lib/db";
-import { aiConfigs, aiPreferences, companies } from "../../db/schema";
+import { aiConfigs, aiPreferences, companies, instagramPosts, mediaJobs } from "../../db/schema";
 import { requireSession } from "../../plugins/auth";
 import { AI_PROVIDERS } from "../../lib/mastra";
 import { resolveUserModel } from "../company/company.workflow";
+import { createMediaJob } from "../media/media.service";
+import { mediaJobResponseSchema } from "../media/media.schemas";
 import {
   aiConfigIdParamsSchema,
   aiConfigResponseSchema,
   createAiConfigSchema,
   errorResponseSchema,
   generateContentBodySchema,
+  generateUgcBodySchema,
+  generateUgcImageBodySchema,
+  generateUgcOverlayBodySchema,
   generatedContentSchema,
   modelQuerySchema,
   onboardingProgressResponseSchema,
@@ -20,6 +25,7 @@ import {
   preferencesSchema,
   updateAiConfigSchema,
   updatePreferencesSchema,
+  ugcContentSchema,
 } from "./ai.schemas";
 
 function maskKey(k: string | null | undefined) {
@@ -38,7 +44,8 @@ function toResponse(row: typeof aiConfigs.$inferSelect) {
     baseUrl: row.baseUrl,
     projectId: row.projectId,
     location: row.location,
-    model: row.model,
+    model: (row as any).model,
+    configId: (row as any).configId ?? null,
     name: row.name,
     isDefault: row.isDefault === "1",
     createdAt: row.createdAt,
@@ -88,6 +95,16 @@ const CURATED_BY_TASK: Record<string, Partial<Record<ModelTask, string[]>>> = {
   },
   fal: {
     image: [],
+    video: [],
+  },
+  openrouter: {
+    image: [
+      "google/gemini-2.5-flash-image",
+      "openai/gpt-image-1",
+      "bytedance-seed/seedream-4.5",
+      "black-forest-labs/flux.2-pro",
+      "xai/grok-2-image",
+    ],
     video: [],
   },
   luma: {
@@ -228,9 +245,10 @@ export async function aiRoutes(app: FastifyInstance) {
           projectId: body.projectId || null,
           location: body.location || null,
           model: body.model || null,
+          configId: body.configId || null,
           name: body.name || null,
           isDefault,
-        })
+        } as any)
         .returning();
       return reply.status(201).send(toResponse(row));
     },
@@ -252,6 +270,7 @@ export async function aiRoutes(app: FastifyInstance) {
       if (body.projectId !== undefined) patch.projectId = body.projectId || null;
       if (body.location !== undefined) patch.location = body.location || null;
       if (body.model !== undefined) patch.model = body.model || null;
+      if (body.configId !== undefined) patch.configId = body.configId || null;
       if (body.name !== undefined) patch.name = body.name || null;
       if (body.isDefault !== undefined) {
         patch.isDefault = body.isDefault ? "1" : "0";
@@ -318,6 +337,7 @@ export async function aiRoutes(app: FastifyInstance) {
       schema: { querystring: modelQuerySchema, response: { 200: z.array(z.object({ id: z.string(), name: z.string() })), 400: errorResponseSchema, 401: errorResponseSchema } },
     },
     async (request, reply) => {
+      if (!request.session) return;
       const { provider, task = "text", configId, apiKey: qApiKey, baseUrl: qBaseUrl, q } = request.query as any;
       if (!AI_PROVIDERS.includes(provider)) return reply.status(400).send({ error: "unknown provider" } as any);
 
@@ -673,6 +693,240 @@ export async function aiRoutes(app: FastifyInstance) {
       } catch (e: any) {
         request.log.warn({ err: e }, "could not parse generated content JSON");
         return reply.status(502).send({ error: "AI returned an unusable response — try again" } as any);
+      }
+    },
+  );
+
+  // ponytail: UGC post generation — a saved scraped post is the inspiration, the brand persona drives the voice
+  r.post(
+    "/ai/generate-ugc",
+    {
+      preHandler: requireSession,
+      schema: { body: generateUgcBodySchema, response: { 200: ugcContentSchema, 400: errorResponseSchema, 404: errorResponseSchema, 502: errorResponseSchema } },
+    },
+    async (request, reply) => {
+      const { companyId, postId } = request.body;
+      const userId = request.session!.user.id;
+
+      const [company] = await db
+        .select()
+        .from(companies)
+        .where(and(eq(companies.id, companyId), eq(companies.userId, userId)));
+      if (!company) return reply.status(404).send({ error: "Company not found" } as any);
+      if (!company.persona)
+        return reply.status(400).send({ error: "This brand has no persona yet — complete onboarding to generate it first." } as any);
+
+      const [post] = await db
+        .select()
+        .from(instagramPosts)
+        .where(and(eq(instagramPosts.id, postId), eq(instagramPosts.userId, userId)));
+      if (!post) return reply.status(404).send({ error: "Inspiration post not found" } as any);
+
+      let model;
+      try {
+        model = await resolveUserModel(userId, "text");
+      } catch (e: any) {
+        return reply.status(400).send({ error: e?.message || "No AI provider configured" } as any);
+      }
+
+      const agent = new (await import("@mastra/core/agent")).Agent({
+        id: "ugc-agent",
+        name: "ugc-agent",
+        instructions:
+          "You are GeoAlt's UGC copywriter. You create original user-generated-content style social posts for a brand, using a reference post only as inspiration — never copying its text. The post must sound authentic, like a real creator talking to their audience, while staying fully on-brand. Always respond with a single valid JSON object and nothing else — no markdown, no commentary.",
+        model: model as any,
+      });
+
+      const inspiration = [
+        post.username ? `@${post.username}` : null,
+        post.caption ? `Caption: """${post.caption.slice(0, 2000)}"""` : null,
+        (() => { try { const h = JSON.parse(post.hashtags ?? "[]"); return Array.isArray(h) && h.length ? `Hashtags: ${h.slice(0, 20).map((x: any) => `#${x}`).join(" ")}` : null; } catch { return null; } })(),
+        post.mediaType ? `Format: ${post.mediaType}` : null,
+      ].filter(Boolean).join("\n");
+
+      let res;
+      try {
+        res = await agent.generate(
+          `Brand: ${company.name}\n` +
+            `Brand persona:\n"""${company.persona.slice(0, 6000)}"""\n\n` +
+            `Reference post (INSPIRATION ONLY — do not copy its wording):\n${inspiration || "(no details available)"}\n\n` +
+            `Create ONE original UGC-style post for this brand inspired by the structure and energy of the reference post. Respond with ONLY this JSON shape:\n` +
+            `{"title": string, "hook": string, "caption": string, "hashtags": string[], "platforms": string[], "aiScore": number}\n` +
+            `- title: short working title in the brand's voice, at most 90 characters\n` +
+            `- hook: attention-grabbing first line (8-18 words) in a natural creator voice\n` +
+            `- caption: full UGC caption, authentic first-person creator tone, 40-600 characters, includes a call-to-action fitting the brand\n` +
+            `- hashtags: 5-10 relevant hashtags (no # prefix), mixing brand and discovery tags\n` +
+            `- platforms: 1-3 values from ${JSON.stringify(VALID_PLATFORMS)} best suited to this post\n` +
+            `- aiScore: integer 0-100 estimating AI visibility / relevance potential for this topic`,
+        );
+      } catch (e: any) {
+        request.log.warn({ err: e }, "ugc generation failed");
+        return reply.status(502).send({ error: e?.message || "ugc generation failed" } as any);
+      }
+
+      try {
+        const parsed = extractJson(res.text);
+        const platforms = Array.isArray(parsed.platforms)
+          ? (parsed.platforms as unknown[]).filter((p): p is string => typeof p === "string" && VALID_PLATFORMS.includes(p))
+          : [];
+        const hashtags = Array.isArray(parsed.hashtags)
+          ? (parsed.hashtags as unknown[])
+              .map((h) => String(h ?? "").replace(/^#/, "").trim())
+              .filter((h) => h.length > 0)
+          : [];
+        const aiScore = Math.max(0, Math.min(100, Math.round(Number(parsed.aiScore ?? 60) || 60)));
+        return {
+          title: String(parsed.title || "UGC post").slice(0, 120),
+          hook: String(parsed.hook || "").slice(0, 280),
+          caption: String(parsed.caption || "").slice(0, 2000),
+          hashtags: [...new Set(hashtags)].slice(0, 10),
+          platforms: [...new Set(platforms)].slice(0, 3),
+          aiScore,
+          sourcePostId: postId,
+        };
+      } catch (e: any) {
+        request.log.warn({ err: e }, "could not parse ugc JSON");
+        return reply.status(502).send({ error: "AI returned an unusable response — try again" } as any);
+      }
+    },
+  );
+
+  // ponytail: UGC image — idea first (generate-ugc), then a similar image via the user's image provider.
+  // Uses the existing media job pipeline: returns the job, frontend polls GET /media/jobs/:id.
+  r.post(
+    "/ai/generate-ugc/image",
+    {
+      preHandler: requireSession,
+      schema: {
+        body: generateUgcImageBodySchema,
+        response: { 201: mediaJobResponseSchema, 400: errorResponseSchema, 404: errorResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { companyId, hook, postId } = request.body;
+      const userId = request.session!.user.id;
+
+      const [company] = await db
+        .select()
+        .from(companies)
+        .where(and(eq(companies.id, companyId), eq(companies.userId, userId)));
+      if (!company) return reply.status(404).send({ error: "Company not found" } as any);
+
+      // ponytail: never feed the hook wording to the image model — models render
+      // quoted phrases as literal text. First translate the idea into a purely
+      // visual scene via the text model, then generate from that scene only.
+      let scene: string | null = null;
+      try {
+        const textModel = await resolveUserModel(userId, "text");
+        const artDirector = new (await import("@mastra/core/agent")).Agent({
+          id: "ugc-art-director",
+          name: "ugc-art-director",
+          instructions:
+            "You are a photo art director. You convert social-post copy into concrete visual scene descriptions for photorealistic lifestyle photography. You describe only things a camera can see — subjects, objects, actions, setting, light, mood, colours. Your descriptions never contain words, letters, numbers, signs, labels, captions or any written text appearing in the scene. Respond with plain text only — no quotes, no lists, no commentary.",
+          model: textModel as any,
+        });
+        const res = await artDirector.generate(
+          `Brand: ${company.name}\n` +
+            `Post hook (meaning only, never its wording): """${hook}"""\n\n` +
+            `Write ONE scene description (30-60 words) of a candid, authentic lifestyle photo that visually expresses this idea for the brand. ` +
+            `The photographed scene must contain no writing, signage, labels or visible captions anywhere — surfaces and objects are plain and unbranded.`,
+        );
+        scene = String(res.text ?? "").trim().slice(0, 500) || null;
+      } catch (e) {
+        request.log.warn({ err: e }, "scene translation failed — falling back to a generic brand scene");
+      }
+
+      const subject = scene ?? `A warm, candid lifestyle moment featuring the kind of product or experience the brand "${company.name}" is known for`;
+      const prompt =
+        `Photorealistic candid lifestyle photograph: ${subject}. ` +
+        `UGC aesthetic — natural lighting, smartphone-shot feel, authentic and unposed, Instagram-worthy composition. ` +
+        `Every surface in the frame is plain and unbranded; the scene contains no words, letters, numbers, signs, labels, stickers or captions anywhere.`;
+
+      try {
+        const job = await createMediaJob({ userId, companyId, task: "image", prompt, inputUrl: null, format: null });
+        return reply.status(201).send(job as any);
+      } catch (e: any) {
+        return reply.status(400).send({ error: e?.message || "Could not start image generation" } as any);
+      }
+    },
+  );
+
+  // ponytail: overlay the hook text on the completed UGC image — Instagram-ready 1080x1080 PNG
+  r.post(
+    "/ai/generate-ugc/image/overlay",
+    {
+      preHandler: requireSession,
+      schema: {
+        body: generateUgcOverlayBodySchema,
+        response: { 200: z.object({ imageUrl: z.string() }), 400: errorResponseSchema, 404: errorResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { jobId, headline, subtext } = request.body;
+      const userId = request.session!.user.id;
+
+      const [job] = await db.select().from(mediaJobs).where(and(eq(mediaJobs.id, jobId), eq(mediaJobs.userId, userId)));
+      if (!job) return reply.status(404).send({ error: "Image job not found" } as any);
+      if (job.status !== "completed" || !job.outputUrl) {
+        return reply.status(400).send({ error: job.status === "failed" ? `Image generation failed: ${job.error ?? "unknown error"}` : "Image is not ready yet — wait for generation to finish." } as any);
+      }
+
+      try {
+        const { overlayTextOnImage, fetchImageBuffer } = await import("../../lib/image");
+        const base = await fetchImageBuffer(job.outputUrl);
+        const composed = await overlayTextOnImage(base, { headline, subtext: subtext ?? null });
+
+        const path = await import("node:path");
+        const { mkdir, writeFile } = await import("node:fs/promises");
+        const dir = path.join(process.cwd(), "data", "media");
+        await mkdir(dir, { recursive: true });
+        const filename = `ugc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.png`;
+        await writeFile(path.join(dir, filename), composed);
+        return { imageUrl: `/media/files/${filename}` };
+      } catch (e: any) {
+        request.log.warn({ err: e }, "ugc image overlay failed");
+        return reply.status(400).send({ error: e?.message || "Could not compose the final image" } as any);
+      }
+    },
+  );
+
+  // ponytail: same-origin square copy of a completed UGC image WITHOUT text —
+  // the client-side editor overlays editable text layers, so rewording never
+  // requires a new image
+  r.post(
+    "/ai/generate-ugc/image/base",
+    {
+      preHandler: requireSession,
+      schema: {
+        body: z.object({ jobId: z.string().min(1) }),
+        response: { 200: z.object({ imageUrl: z.string() }), 400: errorResponseSchema, 404: errorResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const { jobId } = request.body;
+      const userId = request.session!.user.id;
+
+      const [job] = await db.select().from(mediaJobs).where(and(eq(mediaJobs.id, jobId), eq(mediaJobs.userId, userId)));
+      if (!job) return reply.status(404).send({ error: "Image job not found" } as any);
+      if (job.status !== "completed" || !job.outputUrl) {
+        return reply.status(400).send({ error: job.status === "failed" ? `Image generation failed: ${job.error ?? "unknown error"}` : "Image is not ready yet — wait for generation to finish." } as any);
+      }
+
+      try {
+        const { fetchImageBuffer, toSquarePng } = await import("../../lib/image");
+        const buf = await fetchImageBuffer(job.outputUrl);
+        const square = await toSquarePng(buf);
+
+        const path = await import("node:path");
+        const { mkdir, writeFile } = await import("node:fs/promises");
+        const dir = path.join(process.cwd(), "data", "media");
+        await mkdir(dir, { recursive: true });
+        const filename = `ugc_base_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.png`;
+        await writeFile(path.join(dir, filename), square);
+        return { imageUrl: `/media/files/${filename}` };
+      } catch (e: any) {
+        request.log.warn({ err: e }, "ugc base image failed");
+        return reply.status(400).send({ error: e?.message || "Could not prepare the editable base image" } as any);
       }
     },
   );

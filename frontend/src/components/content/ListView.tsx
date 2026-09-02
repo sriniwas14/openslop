@@ -55,7 +55,7 @@ export default function ListView({
   return (
     <div className="overflow-hidden rounded-xl border bg-card">
       {/* header */}
-      <div className="hidden items-center gap-3 border-b bg-muted/40 px-4 py-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase md:flex">
+      <div className="hidden items-center gap-3 border-b px-4 py-2 text-[11px] font-medium tracking-wide text-muted-foreground/80 uppercase md:flex">
         <div className="w-9" />
         <div className="min-w-0 flex-1">Content</div>
         <div className="w-32">Type</div>
@@ -79,7 +79,7 @@ export default function ListView({
                 onSelect(item)
               }
             }}
-            className="group flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors outline-none hover:bg-muted/40 focus-visible:bg-muted/40"
+            className="group flex cursor-pointer items-center gap-3 px-4 py-2.5 transition-colors outline-none hover:bg-muted/30 focus-visible:bg-muted/30"
           >
             <TypeIconBox type={item.type} className="size-9" />
             <div className="min-w-0 flex-1">

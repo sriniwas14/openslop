@@ -13,17 +13,17 @@ export default function Topbar({ onMenuClick }: { onMenuClick?: () => void }) {
         <Button variant="ghost" size="icon" className="md:hidden" onClick={onMenuClick} aria-label="Open menu">
           <Menu className="size-5" />
         </Button>
-        <span className="hidden text-sm font-medium md:inline">Dashboard</span>
+        <span className="hidden text-sm text-muted-foreground md:inline">Dashboard</span>
       </div>
 
       <div className="flex items-center gap-3">
         {session ? (
           <>
             <div className="hidden items-center gap-2 sm:flex">
-              <div className="grid size-7 place-items-center rounded-full bg-muted text-xs font-medium">{initial}</div>
+              <div className="grid size-7 place-items-center rounded-full border bg-muted/50 text-xs font-medium">{initial}</div>
               <span className="max-w-40 truncate text-sm text-muted-foreground">{email}</span>
             </div>
-            <Button variant="outline" size="sm" onClick={() => signOut()}>
+            <Button variant="ghost" size="sm" onClick={() => signOut()}>
               Sign out
             </Button>
           </>

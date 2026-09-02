@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Check, Loader2, RefreshCw } from 'lucide-react'
+import { Check, Loader2, RefreshCw, Search } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -9,12 +9,15 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { useCompany } from '@/context/CompanyContext'
 import { fetchIdeas, generateFromIdea, type Idea } from '@/services/content'
+import { listInfluencers, type InfluencerRow } from '@/services/influencers'
 import { CONTENT_TYPES, type ContentItem, type ContentType } from './data'
-
-const TYPE_OPTIONS = Object.entries(CONTENT_TYPES) as [ContentType, (typeof CONTENT_TYPES)[ContentType]][]
+import { CONTENT_FORMATS } from './formats'
+import ContentFormatSelector from './ContentFormatSelector'
 
 function toContentItem(row: any): ContentItem {
   // ponytail: map backend content row to local ContentItem (platforms/aiScore are UI-only)
@@ -56,6 +59,7 @@ export default function CreateContentDialog({
   const company = companies.find((c) => c.id === selectedId) ?? companies[0] ?? null
 
   const [kind, setKind] = useState<ContentType | null>(null)
+  const [formatId, setFormatId] = useState('slideshow')
   const [duration, setDuration] = useState<15 | 30 | 45>(15)
   const [step, setStep] = useState<'type' | 'duration' | 'ideas'>('type')
 
@@ -63,24 +67,47 @@ export default function CreateContentDialog({
   const [ideasLoading, setIdeasLoading] = useState(false)
   const [ideasError, setIdeasError] = useState<string | null>(null)
   const [selectedId2, setSelectedId2] = useState<string | null>(null)
+  const [influencers, setInfluencers] = useState<InfluencerRow[] | null>(null)
+  const [influencersLoading, setInfluencersLoading] = useState(false)
+  const [influencerSearch, setInfluencerSearch] = useState('')
+  const [selectedInfluencerId, setSelectedInfluencerId] = useState<string | null>(null)
 
   const [generating, setGenerating] = useState(false)
   const [generateError, setGenerateError] = useState<string | null>(null)
 
   const selectedIdea = ideas?.find((i) => i.id === selectedId2) ?? null
+  const filteredInfluencers = (influencers ?? []).filter((inf) => inf.name.toLowerCase().includes(influencerSearch.toLowerCase()))
 
   useEffect(() => {
     if (!open) return
     setKind(null)
+    setFormatId('slideshow')
     setDuration(15)
     setStep('type')
     setIdeas(null)
     setIdeasLoading(false)
     setIdeasError(null)
     setSelectedId2(null)
+    setInfluencers(null)
+    setInfluencersLoading(false)
+    setInfluencerSearch('')
+    setSelectedInfluencerId(null)
     setGenerating(false)
     setGenerateError(null)
   }, [open])
+
+  const loadInfluencers = useCallback(async () => {
+    if (!company) return
+    setInfluencersLoading(true)
+    try {
+      const rows = await listInfluencers(company.id)
+      setInfluencers(rows)
+    } catch {
+      setInfluencers([])
+    } finally {
+      setInfluencersLoading(false)
+    }
+  }, [company])
 
   const loadIdeas = useCallback(async (k: ContentType) => {
     if (!company) {
@@ -113,6 +140,10 @@ export default function CreateContentDialog({
 
   const handleGenerate = async () => {
     if (!selectedIdea || !kind || !company || generating) return
+    if (kind === 'talkinghead' && !selectedInfluencerId) {
+      setGenerateError('Select an influencer for talking head')
+      return
+    }
     setGenerating(true)
     setGenerateError(null)
     try {
@@ -121,6 +152,7 @@ export default function CreateContentDialog({
         selectedHook: selectedIdea.hooks[0],
         kind,
         duration: kind === 'carousel' ? undefined : duration,
+        influencerId: kind === 'talkinghead' ? selectedInfluencerId ?? undefined : undefined,
       })
       onCreate(toContentItem(row))
       onOpenChange(false)
@@ -132,53 +164,25 @@ export default function CreateContentDialog({
   }
 
   const meta = kind ? CONTENT_TYPES[kind] : null
+  const selectedFormat = CONTENT_FORMATS.find((f) => f.id === formatId) ?? CONTENT_FORMATS[0]
+
+  const showInfluencerPicker = kind === 'talkinghead'
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={step === 'type' ? 'sm:max-w-2xl' : step === 'duration' ? 'sm:max-w-md' : 'sm:max-w-xl'}>
+      <DialogContent className={step === 'type' ? 'sm:max-w-[1170px]' : step === 'duration' ? 'sm:max-w-md' : showInfluencerPicker ? 'sm:max-w-2xl' : 'sm:max-w-xl'}>
         {step === 'type' ? (
           <>
-            <DialogHeader>
-              <DialogTitle className="text-lg">Create Content</DialogTitle>
-              <DialogDescription>Pick a content type — we'll generate ideas from your brand persona.</DialogDescription>
-            </DialogHeader>
+            <ContentFormatSelector selectedId={formatId} onSelect={setFormatId} />
 
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3" role="radiogroup" aria-label="Content type">
-              {TYPE_OPTIONS.map(([value, m]) => {
-                const selected = kind === value
-                const Icon = m.icon
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    role="radio"
-                    aria-checked={selected}
-                    onClick={() => handlePickKind(value)}
-                    className={cn(
-                      'group relative flex flex-col items-start gap-3 rounded-xl border p-3.5 text-left transition-all outline-none',
-                      'hover:border-foreground/25 hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50',
-                      selected && 'border-foreground bg-muted/60 ring-2 ring-foreground/70',
-                    )}
-                  >
-                    <div className={cn('grid size-9 place-items-center rounded-lg bg-gradient-to-br text-white shadow-xs', m.gradient)}>
-                      <Icon className="size-4.5" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold">{m.label}</div>
-                      <div className="mt-0.5 text-xs leading-snug text-muted-foreground">{m.description}</div>
-                    </div>
-                    {selected && (
-                      <span className="absolute top-2.5 right-2.5 grid size-5 place-items-center rounded-full bg-foreground text-background">
-                        <Check className="size-3" />
-                      </span>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
-
-            <DialogFooter>
+            <DialogFooter className="items-center gap-3">
+              {selectedFormat.kind === null && (
+                <span className="mr-auto text-xs text-muted-foreground">Generation for this format is coming soon.</span>
+              )}
               <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+              <Button disabled={selectedFormat.kind === null} onClick={() => selectedFormat.kind && handlePickKind(selectedFormat.kind)}>
+                Continue
+              </Button>
             </DialogFooter>
           </>
         ) : step === 'duration' ? (
@@ -213,7 +217,7 @@ export default function CreateContentDialog({
             </div>
             <DialogFooter>
               <Button variant="ghost" onClick={() => setStep('type')}>Back</Button>
-              <Button onClick={() => { setStep('ideas'); if (kind) void loadIdeas(kind) }}>Continue</Button>
+              <Button onClick={() => { setStep('ideas'); if (kind) { void loadIdeas(kind); if (kind === 'talkinghead') void loadInfluencers() } }}>Continue</Button>
             </DialogFooter>
           </>
         ) : (
@@ -221,7 +225,7 @@ export default function CreateContentDialog({
             <DialogHeader>
               <div className="flex items-center gap-2.5">
                 {meta && (
-                  <div className={cn('grid size-8 shrink-0 place-items-center rounded-lg bg-gradient-to-br text-white', meta.gradient)}>
+                  <div className={cn('grid size-8 shrink-0 place-items-center rounded-lg text-background', meta.gradient)}>
                     <meta.icon className="size-4" />
                   </div>
                 )}
@@ -284,6 +288,41 @@ export default function CreateContentDialog({
                 </div>
               )}
 
+              {showInfluencerPicker && !ideasLoading && !ideasError && ideas && (
+                <div className="grid gap-2 border-t pt-3">
+                  <div className="flex items-center gap-2">
+                    <Label className="text-xs font-medium">Select influencer <span className="text-destructive">*</span></Label>
+                    <div className="relative ml-auto w-48">
+                      <Search className="absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                      <Input placeholder="Search..." value={influencerSearch} onChange={(e) => setInfluencerSearch(e.target.value)} className="h-8 pl-7 text-xs" />
+                    </div>
+                  </div>
+                  {influencersLoading ? (
+                    <div className="grid place-items-center py-6 text-xs text-muted-foreground"><Loader2 className="size-4 animate-spin" /> Loading influencers…</div>
+                  ) : !influencers?.length ? (
+                    <p className="py-2 text-center text-xs text-muted-foreground">No influencers yet — add one in Influencers.</p>
+                  ) : filteredInfluencers.length === 0 ? (
+                    <p className="py-2 text-center text-xs text-muted-foreground">No match for "{influencerSearch}"</p>
+                  ) : (
+                    <div className="grid grid-cols-3 gap-2 max-h-[22vh] overflow-auto pr-1">
+                      {filteredInfluencers.map((inf) => {
+                        const sel = selectedInfluencerId === inf.id
+                        return (
+                          <button key={inf.id} type="button" onClick={() => setSelectedInfluencerId(sel ? null : inf.id)} className={cn('overflow-hidden rounded-lg border text-left transition-all outline-none', sel ? 'border-foreground ring-2 ring-foreground/30' : 'hover:border-foreground/20')}>
+                            <div className="aspect-square overflow-hidden bg-muted"><img src={inf.imageUrl} alt={inf.name} className="h-full w-full object-cover" /></div>
+                            <div className="flex items-center justify-between gap-1 px-2 py-1.5">
+                              <span className="truncate text-xs font-medium">{inf.name}</span>
+                              {sel && <span className="grid size-4 shrink-0 place-items-center rounded-full bg-foreground text-background"><Check className="size-2.5" /></span>}
+                            </div>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {!selectedInfluencerId && <p className="text-xs text-destructive">Select an influencer for talking head.</p>}
+                </div>
+              )}
+
               {generateError && <p className="text-sm text-destructive">{generateError}</p>}
             </div>
 
@@ -291,7 +330,7 @@ export default function CreateContentDialog({
               <Button variant="ghost" onClick={() => { setStep('type'); setGenerateError(null) }} disabled={generating}>
                 Back
               </Button>
-              <Button onClick={handleGenerate} disabled={!selectedIdea || generating}>
+              <Button onClick={handleGenerate} disabled={!selectedIdea || generating || (showInfluencerPicker && !selectedInfluencerId)}>
                 {generating && <Loader2 className="animate-spin" data-icon="inline-start" />}
                 {generating ? 'Generating…' : 'Generate'}
               </Button>

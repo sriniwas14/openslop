@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNotNull } from "drizzle-orm";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { db } from "../../lib/db";
 import {
@@ -29,6 +29,13 @@ async function ensureInstagramColumns() {
     try {
       await db.run(`ALTER TABLE instagram_post ADD COLUMN source text DEFAULT 'apify' NOT NULL` as any);
       await db.run(`ALTER TABLE instagram_post ADD COLUMN mentions text` as any);
+    } catch {}
+  }
+  try {
+    await db.run(`SELECT saved_at FROM instagram_post LIMIT 0` as any);
+  } catch {
+    try {
+      await db.run(`ALTER TABLE instagram_post ADD COLUMN saved_at text` as any);
     } catch {}
   }
 }
@@ -107,6 +114,7 @@ function toPostResponse(row: typeof instagramPosts.$inferSelect) {
     mentions: parseStringArray(row.mentions),
     source: row.source,
     scrapedAt: row.scrapedAt,
+    savedAt: (row as any).savedAt ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -272,6 +280,99 @@ export async function instagramRoutes(app: FastifyInstance) {
         .where(and(eq(instagramPosts.sourceId, request.params.id), eq(instagramPosts.userId, request.session!.user.id)))
         .orderBy(desc(instagramPosts.publishedAt))
         .limit(limit);
+      return (rows.map(toPostResponse)) as any;
+    },
+  );
+
+  // ---------- All scraped posts across creators (Trending view) ----------
+  r.get(
+    "/api/integrations/instagram/posts",
+    {
+      preHandler: requireSession,
+      schema: {
+        querystring: z.object({ companyId: z.string().optional(), limit: z.coerce.number().int().positive().max(500).optional() }),
+        response: { 200: z.array(postResponseSchema) },
+      },
+    },
+    async (request) => {
+      const { companyId, limit } = request.query as any;
+      const conds = [eq(instagramPosts.userId, request.session!.user.id)];
+      if (companyId) conds.push(eq(instagramPosts.companyId, companyId));
+      const rows = await db
+        .select()
+        .from(instagramPosts)
+        .where(and(...conds))
+        .orderBy(desc(instagramPosts.publishedAt))
+        .limit(limit ?? 200);
+      // ponytail: likes stored as text — rank by numeric likes client-side instead of lexicographic SQL sort
+      const ranked = rows
+        .map((r) => ({ r, likes: Number(r.likes ?? 0) || 0 }))
+        .sort((a, b) => b.likes - a.likes || (b.r.publishedAt ?? "").localeCompare(a.r.publishedAt ?? ""));
+      return (ranked.map((x) => toPostResponse(x.r))) as any;
+    },
+  );
+
+  // ---------- Save / unsave scraped posts (UGC inspiration library) ----------
+  r.post(
+    "/api/integrations/instagram/posts/:id/save",
+    {
+      preHandler: requireSession,
+      schema: {
+        params: z.object({ id: z.string().min(1) }),
+        response: { 200: postResponseSchema, 404: errorResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const now = new Date().toISOString();
+      const [row] = await db
+        .update(instagramPosts)
+        .set({ savedAt: now, updatedAt: now })
+        .where(and(eq(instagramPosts.id, request.params.id), eq(instagramPosts.userId, request.session!.user.id)))
+        .returning();
+      if (!row) return reply.status(404).send({ error: "Post not found" } as any);
+      return toPostResponse(row) as any;
+    },
+  );
+
+  r.delete(
+    "/api/integrations/instagram/posts/:id/save",
+    {
+      preHandler: requireSession,
+      schema: {
+        params: z.object({ id: z.string().min(1) }),
+        response: { 200: postResponseSchema, 404: errorResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const [row] = await db
+        .update(instagramPosts)
+        .set({ savedAt: null, updatedAt: new Date().toISOString() })
+        .where(and(eq(instagramPosts.id, request.params.id), eq(instagramPosts.userId, request.session!.user.id)))
+        .returning();
+      if (!row) return reply.status(404).send({ error: "Post not found" } as any);
+      return toPostResponse(row) as any;
+    },
+  );
+
+  // ---------- Saved posts for the UGC inspiration library ----------
+  r.get(
+    "/api/integrations/instagram/saved",
+    {
+      preHandler: requireSession,
+      schema: {
+        querystring: z.object({ companyId: z.string().optional() }),
+        response: { 200: z.array(postResponseSchema) },
+      },
+    },
+    async (request) => {
+      const { companyId } = request.query as any;
+      const conds = [eq(instagramPosts.userId, request.session!.user.id), isNotNull(instagramPosts.savedAt)];
+      if (companyId) conds.push(eq(instagramPosts.companyId, companyId));
+      const rows = await db
+        .select()
+        .from(instagramPosts)
+        .where(and(...conds))
+        .orderBy(desc(instagramPosts.savedAt));
       return (rows.map(toPostResponse)) as any;
     },
   );

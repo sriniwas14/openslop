@@ -1,3 +1,4 @@
+import RunwayML, { TaskFailedError } from "@runwayml/sdk";
 import type { AiProvider } from "../../lib/mastra";
 
 export type MediaTask = "image" | "video";
@@ -10,10 +11,12 @@ export type MediaInput = {
   serviceAccountJson?: string | null;
   projectId?: string | null;
   location?: string | null;
+  baseUrl?: string | null;
   task: MediaTask;
   prompt: string;
   inputUrl?: string | null;
   format?: "vertical" | "horizontal" | null;
+  configId?: string | null;
 };
 
 export type MediaPollResult = {
@@ -22,8 +25,6 @@ export type MediaPollResult = {
   outputUrl?: string;
   error?: string;
 };
-
-const RUNWAY_VERSION = "2024-11-06";
 
 function jsonHeaders(headers: Record<string, string>) {
   return { "Content-Type": "application/json", Accept: "application/json", ...headers };
@@ -52,53 +53,80 @@ function ratio(format?: "vertical" | "horizontal" | null) {
   return format === "horizontal" ? "16:9" : "9:16";
 }
 
-function runwayRatio(format?: "vertical" | "horizontal" | null) {
-  // Runway ratios are pixel dimensions per docs — 16:9 form is rejected (400)
-  return format === "horizontal" ? "1280:720" : "720:1280";
+function boxAspectRatio(format?: "vertical" | "horizontal" | null): "16:9" | "9:16" | "1:1" {
+  if (format === "horizontal") return "16:9";
+  if (format === "vertical") return "9:16";
+  return "1:1";
 }
 
-function runwayHeaders(apiKey: string) {
-  return jsonHeaders({ Authorization: `Bearer ${apiKey}`, "X-Runway-Version": RUNWAY_VERSION });
+// ponytail: DB apiKey only — never process.env.RUNWAYML_API_SECRET
+function runwayClient(apiKey: string) {
+  if (!apiKey) throw new Error("Runway API key is required (store in Settings → AI Providers, DB only)");
+  return new RunwayML({ apiKey });
 }
 
 async function startRunway(input: MediaInput): Promise<MediaPollResult> {
-  if (!input.apiKey) throw new Error("Runway API key is required");
-  const endpoint =
-    input.task === "image" ? "text_to_image" : input.inputUrl ? "image_to_video" : "text_to_video";
-  const body: Record<string, unknown> = {
-    model: input.model,
-    promptText: input.prompt,
-    ratio: runwayRatio(input.format),
-  };
-  if (input.task === "video") {
-    body.duration = 5;
-    if (input.inputUrl) body.promptImage = input.inputUrl;
+  const client = runwayClient(input.apiKey ?? "");
+  // prefer Router configId (new path); fallback to model only for legacy configs that lack configId
+  const configId = input.configId?.trim() || null;
+  const prompt = input.task === "image" ? input.prompt.slice(0, 5000) : input.prompt;
+  const aspectRatio = boxAspectRatio(input.format);
+  try {
+    if (input.task === "image") {
+      if (!configId) throw new Error(`Runway Router configId is required for image (store in Settings → AI Providers → Runway configId, e.g. "preview-fast"). Legacy model "${input.model}" is no longer routed via v1/text_to_image`);
+      const task = await client.generate.image.create({
+        configId,
+        input: { promptText: prompt, aspectRatio, resolution: "2k" as const },
+      });
+      const id = (task as any)?.id;
+      if (!id) throw new Error("Runway Router did not return a task id");
+      return { status: "processing", providerTaskId: String(id) };
+    } else {
+      if (!configId) throw new Error(`Runway Router configId is required for video (store in Settings → AI Providers → Runway configId)`);
+      const videoInput: any = { promptText: prompt, aspectRatio, resolution: "720p" as const, duration: 5, audio: true };
+      if (input.inputUrl) {
+        // Router video with source image: role required by API — "first" = open on this frame
+        videoInput.referenceImages = [{ uri: input.inputUrl, role: "first" as const }];
+      }
+      const task = await client.generate.video.create({ configId, input: videoInput });
+      const id = (task as any)?.id;
+      if (!id) throw new Error("Runway Router did not return a task id");
+      return { status: "processing", providerTaskId: String(id) };
+    }
+  } catch (e: any) {
+    if (e instanceof TaskFailedError) {
+      throw new Error(`Runway task failed: ${String((e as any).taskDetails ?? e.message).slice(0, 1000)}`);
+    }
+    // surface SDK BadRequest details
+    const msg = e?.message ?? String(e);
+    const details = e?.error?.details ?? e?.details ?? "";
+    const detailStr = details ? `: ${JSON.stringify(details).slice(0, 500)}` : "";
+    throw new Error(`${msg}${detailStr}`.slice(0, 1200));
   }
-  const result = await providerJson(`https://api.dev.runwayml.com/v1/${endpoint}`, {
-    method: "POST",
-    headers: runwayHeaders(input.apiKey),
-    body: JSON.stringify(body),
-  });
-  const id = result?.id ?? result?.task?.id;
-  if (!id) throw new Error("Runway did not return a task id");
-  return { status: "processing", providerTaskId: String(id) };
 }
 
 async function pollRunway(input: MediaInput, taskId: string): Promise<MediaPollResult> {
-  if (!input.apiKey) throw new Error("Runway API key is required");
-  const result = await providerJson(`https://api.dev.runwayml.com/v1/tasks/${encodeURIComponent(taskId)}`, {
-    headers: runwayHeaders(input.apiKey),
-  });
-  const state = String(result?.status ?? "").toUpperCase();
-  if (["SUCCEEDED", "COMPLETED"].includes(state)) {
-    const output = result?.output?.[0] ?? result?.output?.url ?? result?.result?.output?.[0];
-    if (!output) throw new Error("Runway completed without an output URL");
-    return { status: "completed", providerTaskId: taskId, outputUrl: String(output) };
+  const client = runwayClient(input.apiKey ?? "");
+  try {
+    const task: any = await client.tasks.retrieve(taskId);
+    const status = String(task?.status ?? "").toUpperCase();
+    if (status === "SUCCEEDED") {
+      const output = task?.output?.[0] ?? task?.output;
+      const url = Array.isArray(output) ? output[0] : typeof output === "string" ? output : null;
+      if (!url) throw new Error("Runway completed without an output URL");
+      return { status: "completed", providerTaskId: taskId, outputUrl: String(url) };
+    }
+    if (status === "FAILED" || status === "CANCELLED") {
+      return { status: "failed", providerTaskId: taskId, error: String(task?.failure ?? task?.error ?? "Runway task failed").slice(0, 2000) };
+    }
+    // PENDING | RUNNING | THROTTLED
+    return { status: "processing", providerTaskId: taskId };
+  } catch (e: any) {
+    if (e instanceof TaskFailedError) {
+      return { status: "failed", providerTaskId: taskId, error: String((e as any).taskDetails ?? e.message).slice(0, 2000) };
+    }
+    throw e;
   }
-  if (["FAILED", "CANCELED", "CANCELLED"].includes(state)) {
-    return { status: "failed", providerTaskId: taskId, error: String(result?.failure ?? result?.error ?? "Runway task failed") };
-  }
-  return { status: "processing", providerTaskId: taskId };
 }
 
 function base64Url(value: string | Uint8Array) {
@@ -192,6 +220,29 @@ async function pollVertex(input: MediaInput, operation: string): Promise<MediaPo
   throw new Error("Vertex Veo completed without a video output");
 }
 
+// ponytail: OpenRouter /images is synchronous — b64_json returned inline (can take 60-90s)
+async function startOpenRouter(input: MediaInput): Promise<MediaPollResult> {
+  if (!input.apiKey) throw new Error("OpenRouter API key is required (store in Settings → AI Providers)");
+  if (input.task !== "image") throw new Error("OpenRouter supports image generation only — use Runway, Vertex or Luma for video");
+  const base = (input.baseUrl || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
+  const body: Record<string, unknown> = {
+    model: input.model,
+    prompt: input.prompt.slice(0, 5000),
+    aspect_ratio: boxAspectRatio(input.format),
+  };
+  if (input.inputUrl) body.input_references = [{ type: "image_url", image_url: { url: input.inputUrl } }];
+  const result = await providerJson(`${base}/images`, {
+    method: "POST",
+    headers: jsonHeaders({ Authorization: `Bearer ${input.apiKey}` }),
+    body: JSON.stringify(body),
+  });
+  const image = result?.data?.[0];
+  const url = image?.url ?? image?.image_url?.url;
+  if (url) return { status: "completed", outputUrl: String(url) };
+  if (!image?.b64_json) throw new Error("OpenRouter returned no image output");
+  return { status: "completed", outputUrl: `data:${image.media_type ?? "image/png"};base64,${image.b64_json}` };
+}
+
 async function startLuma(input: MediaInput): Promise<MediaPollResult> {
   if (!input.apiKey) throw new Error("Luma API key is required");
   const body: Record<string, unknown> = { prompt: input.prompt, model: input.model, aspect_ratio: ratio(input.format) };
@@ -224,6 +275,7 @@ async function pollLuma(input: MediaInput, id: string): Promise<MediaPollResult>
 export async function startMedia(input: MediaInput): Promise<MediaPollResult> {
   if (input.provider === "runway") return startRunway(input);
   if (input.provider === "vertex") return startVertex(input);
+  if (input.provider === "openrouter") return startOpenRouter(input);
   if (input.provider === "luma") return startLuma(input);
   throw new Error(`${input.provider} does not have a media generation adapter`);
 }
@@ -231,6 +283,7 @@ export async function startMedia(input: MediaInput): Promise<MediaPollResult> {
 export async function pollMedia(input: MediaInput, providerTaskId: string): Promise<MediaPollResult> {
   if (input.provider === "runway") return pollRunway(input, providerTaskId);
   if (input.provider === "vertex") return pollVertex(input, providerTaskId);
+  if (input.provider === "openrouter") throw new Error("OpenRouter image generation completes synchronously — job should not need polling");
   if (input.provider === "luma") return pollLuma(input, providerTaskId);
   throw new Error(`${input.provider} does not have a media generation adapter`);
 }
