@@ -68,10 +68,10 @@ export default function InfluencersPage() {
           </div>
         </div>
       ) : (
-        <div className="columns-1 gap-4 sm:columns-2 lg:columns-3">
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
           {items.map((inf) => (
-            <div key={inf.id} className="mb-4 break-inside-avoid overflow-hidden rounded-xl border bg-card">
-              <img src={inf.imageUrl} alt={inf.name} className="aspect-[3/4] w-full object-cover" loading="lazy" />
+            <div key={inf.id} className="overflow-hidden rounded-xl border bg-card">
+              <img src={inf.imageUrl} alt={inf.name} className="aspect-video w-full object-cover" loading="lazy" />
               <div className="flex items-center justify-between gap-2 p-3">
                 <div className="min-w-0">
                   <div className="truncate text-sm font-medium">{inf.name}</div>
