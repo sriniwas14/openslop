@@ -16,8 +16,8 @@ import { useCompany } from '@/context/CompanyContext'
 import { fetchIdeas, generateFromIdea, type Idea } from '@/services/content'
 import { listInfluencers, type InfluencerRow } from '@/services/influencers'
 import { CONTENT_TYPES, type ContentItem, type ContentType } from './data'
-
-const TYPE_OPTIONS = Object.entries(CONTENT_TYPES) as [ContentType, (typeof CONTENT_TYPES)[ContentType]][]
+import { CONTENT_FORMATS } from './formats'
+import ContentFormatSelector from './ContentFormatSelector'
 
 function toContentItem(row: any): ContentItem {
   // ponytail: map backend content row to local ContentItem (platforms/aiScore are UI-only)
@@ -59,6 +59,7 @@ export default function CreateContentDialog({
   const company = companies.find((c) => c.id === selectedId) ?? companies[0] ?? null
 
   const [kind, setKind] = useState<ContentType | null>(null)
+  const [formatId, setFormatId] = useState('slideshow')
   const [duration, setDuration] = useState<15 | 30 | 45>(15)
   const [step, setStep] = useState<'type' | 'duration' | 'ideas'>('type')
 
@@ -80,6 +81,7 @@ export default function CreateContentDialog({
   useEffect(() => {
     if (!open) return
     setKind(null)
+    setFormatId('slideshow')
     setDuration(15)
     setStep('type')
     setIdeas(null)
@@ -162,55 +164,25 @@ export default function CreateContentDialog({
   }
 
   const meta = kind ? CONTENT_TYPES[kind] : null
+  const selectedFormat = CONTENT_FORMATS.find((f) => f.id === formatId) ?? CONTENT_FORMATS[0]
 
   const showInfluencerPicker = kind === 'talkinghead'
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className={step === 'type' ? 'sm:max-w-2xl' : step === 'duration' ? 'sm:max-w-md' : showInfluencerPicker ? 'sm:max-w-2xl' : 'sm:max-w-xl'}>
+      <DialogContent className={step === 'type' ? 'sm:max-w-[1170px]' : step === 'duration' ? 'sm:max-w-md' : showInfluencerPicker ? 'sm:max-w-2xl' : 'sm:max-w-xl'}>
         {step === 'type' ? (
           <>
-            <DialogHeader>
-              <DialogTitle className="text-lg">Create Content</DialogTitle>
-              <DialogDescription>Pick a content type — we'll generate ideas from your brand persona.</DialogDescription>
-            </DialogHeader>
+            <ContentFormatSelector selectedId={formatId} onSelect={setFormatId} />
 
-            <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-3" role="radiogroup" aria-label="Content type">
-              {TYPE_OPTIONS.map(([value, m]) => {
-                const selected = kind === value
-                const Icon = m.icon
-                return (
-                  <button
-                    key={value}
-                    type="button"
-                    role="radio"
-                    aria-checked={selected}
-                    onClick={() => handlePickKind(value)}
-                    className={cn(
-                      'group relative flex flex-col items-start gap-3 rounded-xl border p-3.5 text-left transition-all outline-none',
-                      'hover:border-foreground/25 hover:bg-muted/50 focus-visible:ring-3 focus-visible:ring-ring/50',
-                      selected && 'border-foreground bg-muted/60 ring-2 ring-foreground/70',
-                    )}
-                  >
-                    <div className={cn('grid size-9 place-items-center rounded-lg text-background', m.gradient)}>
-                      <Icon className="size-4.5" />
-                    </div>
-                    <div className="min-w-0">
-                      <div className="text-sm font-semibold">{m.label}</div>
-                      <div className="mt-0.5 text-xs leading-snug text-muted-foreground">{m.description}</div>
-                    </div>
-                    {selected && (
-                      <span className="absolute top-2.5 right-2.5 grid size-5 place-items-center rounded-full bg-foreground text-background">
-                        <Check className="size-3" />
-                      </span>
-                    )}
-                  </button>
-                )
-              })}
-            </div>
-
-            <DialogFooter>
+            <DialogFooter className="items-center gap-3">
+              {selectedFormat.kind === null && (
+                <span className="mr-auto text-xs text-muted-foreground">Generation for this format is coming soon.</span>
+              )}
               <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+              <Button disabled={selectedFormat.kind === null} onClick={() => selectedFormat.kind && handlePickKind(selectedFormat.kind)}>
+                Continue
+              </Button>
             </DialogFooter>
           </>
         ) : step === 'duration' ? (

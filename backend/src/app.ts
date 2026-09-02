@@ -12,6 +12,7 @@ import { aiRoutes } from "./modules/ai/ai.routes";
 import { contentRoutes } from "./modules/content/content.routes";
 import { mediaRoutes } from "./modules/media/media.routes";
 import { influencerRoutes } from "./modules/influencer/influencer.routes";
+import { instagramRoutes } from "./modules/instagram/instagram.routes";
 import { startMediaWorker } from "./modules/media/media.service";
 
 export function createApp() {
@@ -24,8 +25,8 @@ export function createApp() {
     if ((reply as any).sent || (reply.raw as any).headersSent) return;
     const v = (err as any).validation;
     if (v) {
-      request.log.warn({ validation: v }, err.message);
-      return reply.status((err as any).statusCode ?? 400).send({ error: err.message, validation: v });
+      request.log.warn({ validation: v }, (err as any).message);
+      return reply.status((err as any).statusCode ?? 400).send({ error: (err as any).message, validation: v });
     }
     return reply.send(err);
   });
@@ -58,6 +59,7 @@ export function createApp() {
   app.register(contentRoutes);
   app.register(mediaRoutes);
   app.register(influencerRoutes);
+  app.register(instagramRoutes);
   const stopMediaWorker = startMediaWorker();
   app.addHook("onClose", async () => stopMediaWorker());
 

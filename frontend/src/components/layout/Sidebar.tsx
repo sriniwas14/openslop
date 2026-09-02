@@ -7,6 +7,7 @@ import BrandLogo from '@/components/BrandLogo'
 const topItems = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/dashboard/trending', label: 'Trending', icon: TrendingUp },
+  { to: '/dashboard/creators', label: 'Creators', icon: Users },
   { to: '/dashboard/content', label: 'Content', icon: FileText },
   { to: '/dashboard/influencers', label: 'Influencers', icon: Users },
 ]
