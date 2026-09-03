@@ -28,7 +28,9 @@ export type UgcTextSuggestion = {
 }
 
 const CANVAS = 1080
-const MAX_TEXT_WIDTH = CANVAS * 0.9
+// 70% of canvas width — headline block stays centred with safe margins,
+// matching the feed overlay (overlayConfig maxWidthPct 0.70).
+const MAX_TEXT_WIDTH = CANVAS * 0.7
 
 const FONTS = [
   { label: 'Sans', value: 'Helvetica, Arial, sans-serif' },
@@ -41,11 +43,13 @@ const COLORS = ['#ffffff', '#171717', '#FF941F', '#facc15', '#ef4444', '#38bdf8'
 // classic Instagram story palette for the text background pill
 const BG_COLORS = ['#171717', '#ffffff', '#FF941F', '#ef4444', '#ec4899', '#8b5cf6', '#38bdf8', '#22c55e']
 
-// headline size follows text length — shorter hooks render bigger
+// headline size follows text length — shorter hooks render bigger.
+// ~25-30% smaller than before so the text reads as a headline without
+// dominating the frame; stays responsive via canvas-relative sizing.
 function headlineFontSize(text: string) {
-  if (text.length > 70) return 56
-  if (text.length > 45) return 68
-  return 80
+  if (text.length > 70) return 40
+  if (text.length > 45) return 50
+  return 58
 }
 
 type Box = { x: number; y: number; w: number; h: number }
@@ -217,7 +221,7 @@ export default function UgcImageEditor({
     const id = `layer_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
     setLayers((prev) => [
       ...prev,
-      { id, text: 'New text', x: CANVAS / 2, y: CANVAS / 2, fontSize: 56, color: '#ffffff', fontFamily: FONTS[0].value, bold: true, outline: true, bgMode: 'none', bgColor: '#171717', bgOpacity: 85 },
+      { id, text: 'New text', x: CANVAS / 2, y: CANVAS / 2, fontSize: 42, color: '#ffffff', fontFamily: FONTS[0].value, bold: true, outline: true, bgMode: 'none', bgColor: '#171717', bgOpacity: 85 },
     ])
     setSelectedId(id)
   }
@@ -229,7 +233,7 @@ export default function UgcImageEditor({
     const layer: TextLayer =
       s.style === 'headline'
         ? { id, text: s.text, x: CANVAS / 2, y: 800, fontSize: headlineFontSize(s.text), color: '#ffffff', fontFamily: FONTS[0].value, bold: true, outline: false, bgMode: 'pill', bgColor: '#171717', bgOpacity: 85 }
-        : { id, text: s.text, x: CANVAS / 2, y: 1010, fontSize: 30, color: '#ffffff', fontFamily: FONTS[0].value, bold: true, outline: true, bgMode: 'none', bgColor: '#171717', bgOpacity: 85 }
+        : { id, text: s.text, x: CANVAS / 2, y: 1010, fontSize: 23, color: '#ffffff', fontFamily: FONTS[0].value, bold: true, outline: true, bgMode: 'none', bgColor: '#171717', bgOpacity: 85 }
     setLayers((prev) => [...prev, layer])
     setSelectedId(id)
   }

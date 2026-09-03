@@ -8,12 +8,17 @@ import { registerSwagger } from "./plugins/swagger";
 import { authRoutes } from "./plugins/auth";
 import { healthRoutes } from "./modules/health/health.routes";
 import { companyRoutes } from "./modules/company/company.routes";
+import { brandRoutes } from "./modules/brand/brand.routes";
 import { aiRoutes } from "./modules/ai/ai.routes";
 import { contentRoutes } from "./modules/content/content.routes";
 import { mediaRoutes } from "./modules/media/media.routes";
 import { influencerRoutes } from "./modules/influencer/influencer.routes";
 import { instagramRoutes } from "./modules/instagram/instagram.routes";
+import { ugcRoutes } from "./modules/ugc/ugc.routes";
+import { visualRoutes } from "./modules/visual/visual.routes";
 import { startMediaWorker } from "./modules/media/media.service";
+import { startContentGenerationWorker } from "./modules/ugc/ugc.service";
+import { startVisualWorker } from "./modules/visual/visual.service";
 
 export function createApp() {
   const app = Fastify({ logger: true, bodyLimit: 15 * 1024 * 1024 }).withTypeProvider<ZodTypeProvider>();
@@ -55,13 +60,22 @@ export function createApp() {
   app.register(registerSwagger);
   app.register(healthRoutes);
   app.register(companyRoutes);
+  app.register(brandRoutes);
   app.register(aiRoutes);
   app.register(contentRoutes);
   app.register(mediaRoutes);
   app.register(influencerRoutes);
   app.register(instagramRoutes);
+  app.register(ugcRoutes);
+  app.register(visualRoutes);
   const stopMediaWorker = startMediaWorker();
-  app.addHook("onClose", async () => stopMediaWorker());
+  const stopContentGenerationWorker = startContentGenerationWorker();
+  const stopVisualWorker = startVisualWorker();
+  app.addHook("onClose", async () => {
+    stopMediaWorker();
+    stopContentGenerationWorker();
+    stopVisualWorker();
+  });
 
   return app;
 }

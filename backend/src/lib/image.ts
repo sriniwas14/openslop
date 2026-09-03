@@ -1,4 +1,5 @@
 import sharp from "sharp";
+import type { OverlayConfig } from "./overlayLayout";
 
 // ponytail: 720p jpeg for provider payloads (Runway referenceImages 413s on multi-MB data URIs)
 export async function toResizedDataUri(input: Buffer, maxLongEdge = 1280, quality = 80): Promise<string> {
@@ -93,6 +94,82 @@ export async function overlayTextOnImage(
     .toBuffer();
 
   return sharp(base)
+    .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
+    .png()
+    .toBuffer();
+}
+
+// ---------------------------------------------------------------------------
+// Reels/UGC-style centered text overlay — matches the feed preview exactly.
+//
+// Renders bold text sized/wrapped responsively using the SAME layout engine
+// as the frontend (overlayLayout.ts / overlayConfig.ts). No scrim, no bottom
+// pin. Optional per-line rounded background chips (`background.enabled`)
+// drawn from the same geometry helper the preview uses — one chip hugging
+// each line's measured width, never a container-wide box.
+//
+// Accepts any output size/aspect (9:16, 1:1, 4:5, 16:9) so export == preview.
+// ---------------------------------------------------------------------------
+export async function overlayCenteredTextOnImage(
+  input: Buffer,
+  text: string,
+  size: { width: number; height: number } | number = 1080,
+  overrides?: Partial<OverlayConfig>,
+  background?: { enabled: boolean; color?: string },
+): Promise<Buffer> {
+  // Resolve output dimensions (number → square of that size)
+  const outW = typeof size === "number" ? size : size.width;
+  const outH = typeof size === "number" ? size : size.height;
+
+  const { computeOverlayLayout, backgroundRectsForLayout, HIGHLIGHT } = await import("./overlayLayout");
+  const coverWidth = 1920;
+  const coverHeight = Math.round((outH / outW) * coverWidth);
+
+  // Crop the input to the target aspect (cover), then compose the SVG overlay.
+  const base = await sharp(input)
+    .resize(coverWidth, coverHeight, { fit: "cover", position: "centre" })
+    .png()
+    .toBuffer();
+
+  // Chips need the same roomier line height the preview uses.
+  const mergedOverrides = background?.enabled ? { ...overrides, lineHeight: HIGHLIGHT.lineHeight } : overrides;
+  const layout = computeOverlayLayout(text, { width: outW, height: outH }, mergedOverrides);
+  const cfg = layout.config;
+  const cx = layout.leftPx;
+
+  // Optional text background: one rounded rect hugging each line's measured
+  // width — computed by the shared helper, never the container width.
+  const rawColor = background?.color ?? "#FFFFFF";
+  const bgColor = /^#[0-9a-fA-F]{6}$/.test(rawColor) ? rawColor : "#FFFFFF";
+  const r1 = (n: number) => Math.round(n * 10) / 10;
+  const rectEls = background?.enabled
+    ? backgroundRectsForLayout(layout)
+        .map((r) => `<rect x="${r1(r.x)}" y="${r1(r.y)}" width="${r1(r.width)}" height="${r1(r.height)}" rx="${r1(r.rx)}" fill="${bgColor}"/>`)
+        .join("\n    ")
+    : "";
+
+  // Vertically position the block so lines land within the layout's block.
+  const firstBaselineStart = layout.topPx + layout.fontSize * 0.72;
+
+  const textEls = layout.lines
+    .map((line, i) => {
+      const y = firstBaselineStart + i * Math.round(layout.fontSize * cfg.lineHeight);
+      const stroke = layout.strokeWidth;
+      return `<text x="${cx}" y="${y}" text-anchor="middle" font-family="${cfg.fontFamily}" font-weight="${cfg.fontWeight}" font-size="${layout.fontSize}" fill="${cfg.textColor}" style="paint-order: stroke;" stroke="${cfg.strokeColor}" stroke-width="${stroke}" stroke-linejoin="round">${escapeXml(line)}</text>`;
+    })
+    .join("\n    ");
+
+  const svg = `<svg width="${outW}" height="${outH}" xmlns="http://www.w3.org/2000/svg">
+  <g>
+    ${rectEls}
+    ${textEls}
+  </g>
+</svg>`;
+
+  // Composite the SVG (scaled to full output). We render text in the same px
+  // space as output so stroke/shadow stay sharp at any resolution.
+  return sharp(base)
+    .resize(outW, outH, { fit: "cover", position: "centre" })
     .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])
     .png()
     .toBuffer();

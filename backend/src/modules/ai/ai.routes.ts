@@ -7,6 +7,7 @@ import { aiConfigs, aiPreferences, companies, instagramPosts, mediaJobs } from "
 import { requireSession } from "../../plugins/auth";
 import { AI_PROVIDERS } from "../../lib/mastra";
 import { resolveUserModel } from "../company/company.workflow";
+import { getBrandContext, buildBrandContextPrompt } from "../brand/brand.service";
 import { createMediaJob } from "../media/media.service";
 import { mediaJobResponseSchema } from "../media/media.schemas";
 import {
@@ -642,8 +643,15 @@ export async function aiRoutes(app: FastifyInstance) {
         .from(companies)
         .where(and(eq(companies.id, companyId), eq(companies.userId, userId)));
       if (!company) return reply.status(404).send({ error: "Company not found" } as any);
-      if (!company.persona)
-        return reply.status(400).send({ error: "This brand has no persona yet — complete onboarding to generate it first." } as any);
+      // ponytail: Brand Intelligence ("Brand Brain") is the source of truth; fall back to legacy persona
+      const brandCtx = await getBrandContext(companyId, userId);
+      const brandBlock = brandCtx
+        ? buildBrandContextPrompt(brandCtx)
+        : company.persona
+          ? `Brand persona:\n"""${company.persona.slice(0, 6000)}"""`
+          : null;
+      if (!brandBlock)
+        return reply.status(400).send({ error: "This brand has no persona or Brand Intelligence yet — generate it first." } as any);
 
       let model;
       try {
@@ -664,7 +672,7 @@ export async function aiRoutes(app: FastifyInstance) {
       try {
         res = await agent.generate(
           `Brand: ${company.name}\n` +
-            `Brand persona:\n"""${company.persona.slice(0, 6000)}"""\n\n` +
+            `${brandBlock}\n\n` +
             `Content type to plan: ${KIND_LABELS[type]}\n\n` +
             `Plan ONE fresh piece of content of this type that fits this brand's audience, voice and positioning. Respond with ONLY this JSON shape:\n` +
             `{"title": string, "summary": string, "platforms": string[], "aiScore": number}\n` +
@@ -713,8 +721,15 @@ export async function aiRoutes(app: FastifyInstance) {
         .from(companies)
         .where(and(eq(companies.id, companyId), eq(companies.userId, userId)));
       if (!company) return reply.status(404).send({ error: "Company not found" } as any);
-      if (!company.persona)
-        return reply.status(400).send({ error: "This brand has no persona yet — complete onboarding to generate it first." } as any);
+      // ponytail: Brand Intelligence ("Brand Brain") is the source of truth; fall back to legacy persona
+      const brandCtx = await getBrandContext(companyId, userId);
+      const brandBlock = brandCtx
+        ? buildBrandContextPrompt(brandCtx)
+        : company.persona
+          ? `Brand persona:\n"""${company.persona.slice(0, 6000)}"""`
+          : null;
+      if (!brandBlock)
+        return reply.status(400).send({ error: "This brand has no persona or Brand Intelligence yet — generate it first." } as any);
 
       const [post] = await db
         .select()
@@ -748,7 +763,7 @@ export async function aiRoutes(app: FastifyInstance) {
       try {
         res = await agent.generate(
           `Brand: ${company.name}\n` +
-            `Brand persona:\n"""${company.persona.slice(0, 6000)}"""\n\n` +
+            `${brandBlock}\n\n` +
             `Reference post (INSPIRATION ONLY — do not copy its wording):\n${inspiration || "(no details available)"}\n\n` +
             `Create ONE original UGC-style post for this brand inspired by the structure and energy of the reference post. Respond with ONLY this JSON shape:\n` +
             `{"title": string, "hook": string, "caption": string, "hashtags": string[], "platforms": string[], "aiScore": number}\n` +

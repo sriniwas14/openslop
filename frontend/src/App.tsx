@@ -1,15 +1,18 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { useSession } from '@/services/auth'
+import { ToastProvider } from '@/components/ui/toast'
 import DashboardLayout from '@/layouts/DashboardLayout'
 import Dashboard from '@/pages/Dashboard'
 import Trending from '@/pages/Trending'
 import ContentPage from '@/pages/Content'
+import ContentFeed from '@/pages/ContentFeed'
 import InfluencersPage from '@/pages/Influencers'
 import Settings from '@/pages/Settings'
 import Creators from '@/pages/Creators'
 import SignIn from '@/pages/SignIn'
 import SignUp from '@/pages/SignUp'
 import Onboarding from '@/pages/Onboarding'
+import BrandIntelligence from '@/pages/BrandIntelligence'
 
 function RootRedirect() {
   const { data: session, isPending } = useSession()
@@ -20,22 +23,26 @@ function RootRedirect() {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<RootRedirect />} />
-        <Route path="/onboarding" element={<Onboarding />} />
-        <Route path="/onboarding/progress" element={<Onboarding />} />
-        <Route path="/signin" element={<SignIn />} />
-        <Route path="/signup" element={<SignUp />} />
-        <Route element={<DashboardLayout />}>
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/dashboard/trending" element={<Trending />} />
-          <Route path="/dashboard/content" element={<ContentPage />} />
-          <Route path="/dashboard/influencers" element={<InfluencersPage />} />
-          <Route path="/dashboard/settings" element={<Settings />} />
-          <Route path="/dashboard/creators" element={<Creators />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+    <ToastProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/" element={<RootRedirect />} />
+          <Route path="/onboarding" element={<Onboarding />} />
+          <Route path="/onboarding/progress" element={<Onboarding />} />
+          <Route path="/signin" element={<SignIn />} />
+          <Route path="/signup" element={<SignUp />} />
+          <Route element={<DashboardLayout />}>
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/dashboard/trending" element={<Trending />} />
+            <Route path="/dashboard/content" element={<ContentPage />} />
+            <Route path="/dashboard/feed" element={<ContentFeed />} />
+            <Route path="/dashboard/brand" element={<BrandIntelligence />} />
+            <Route path="/dashboard/influencers" element={<InfluencersPage />} />
+            <Route path="/dashboard/settings" element={<Settings />} />
+            <Route path="/dashboard/creators" element={<Creators />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
+    </ToastProvider>
   )
 }

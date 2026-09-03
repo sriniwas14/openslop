@@ -177,11 +177,14 @@ export async function queueContentMedia(input: {
   const jobs: any[] = [];
   try {
     if (task === "image") {
+      // Each slideshow slide is generated (and composed) independently — the
+      // placement directive keeps baked-in slide text out of the subject zone.
+      const { SLIDESHOW_SLIDE_DIRECTIVE } = await import("../../lib/overlayLayout");
       for (const [index, image] of (input.images ?? []).entries()) {
         jobs.push(await createMediaJob({
           ...input,
           task,
-          prompt: `Create a social media image for this slide. Caption/text concept: ${image.text}`,
+          prompt: `Create a social media image for this slide. Caption/text concept: ${image.text}. ${SLIDESHOW_SLIDE_DIRECTIVE}`,
           inputUrl: null,
           outputIndex: index,
         }));
