@@ -269,6 +269,24 @@ export type InstagramSource = typeof instagramSources.$inferSelect;
 export type InstagramPost = typeof instagramPosts.$inferSelect;
 export type InstagramScrapeJob = typeof instagramScrapeJobs.$inferSelect;
 
+// ponytail: global content templates — seeded from data/templates.ts, read-only via GET /content-templates
+export const contentTemplates = sqliteTable("content_template", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  title: text("title").notNull(),
+  prompt: text("prompt").notNull(),
+  previewImage: text("preview_image").notNull(),
+  duration: text("duration").notNull().default("15"),
+  structure: text("structure"),
+  createdAt: text("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+
 export const influencers = sqliteTable(
   "influencer",
   {
@@ -305,3 +323,4 @@ export type AiPreferences = typeof aiPreferences.$inferSelect;
 export type OnboardingProgress = typeof onboardingProgress.$inferSelect;
 export type MediaJob = typeof mediaJobs.$inferSelect;
 export type Influencer = typeof influencers.$inferSelect;
+export type ContentTemplate = typeof contentTemplates.$inferSelect;

@@ -63,9 +63,24 @@ export function renderVideo(contentId: string): Promise<ContentRow> {
   return fetch(`/contents/${contentId}/render`, { method: 'POST', credentials: 'include' }).then(handle<ContentRow>)
 }
 
+export type ContentTemplate = {
+  id: string
+  title: string
+  prompt: string
+  previewImage: string
+  duration: "15" | "30" | "45"
+  structure: string | null
+  createdAt: string
+  updatedAt: string
+}
+
+export function listContentTemplates(): Promise<ContentTemplate[]> {
+  return fetch('/content-templates').then(handle<ContentTemplate[]>)
+}
+
 export function generateFromIdea(
   companyId: string,
-  body: { idea: Idea; selectedHook: string; kind?: string; title?: string; duration?: 15 | 30 | 45; influencerId?: string },
+  body: { idea: Idea; selectedHook: string; kind?: string; title?: string; duration?: 15 | 30 | 45; influencerId?: string; visualStyle?: string },
 ): Promise<unknown> {
   return fetch(`/companies/${companyId}/contents/generate`, {
     method: 'POST',
