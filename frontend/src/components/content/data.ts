@@ -23,6 +23,7 @@ export type ContentItem = {
   format: 'vertical' | 'horizontal' | null
   mediaUrl?: string | null
   duration?: number | null
+  templateId?: string | null
 }
 
 /* -------------------------------- metadata -------------------------------- */

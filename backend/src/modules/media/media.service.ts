@@ -132,13 +132,9 @@ export async function createMediaJob(input: {
 }) {
   const { config, model } = await getMediaConfig(input.userId, input.task, input.configId);
   const mediaProviders = ["runway", "vertex", "luma"];
-  const isOpenRouterImage = config.provider === "openrouter" && input.task === "image";
-  if (!mediaProviders.includes(config.provider) && !isOpenRouterImage) {
-    throw new Error(
-      config.provider === "openrouter"
-        ? "OpenRouter supports image generation only — set a Runway, Vertex or Luma provider for video in Settings → AI Providers"
-        : `${config.provider} does not support media generation`,
-    );
+  const isOpenRouter = config.provider === "openrouter";
+  if (!mediaProviders.includes(config.provider) && !isOpenRouter) {
+    throw new Error(`${config.provider} does not support media generation`);
   }
   const now = new Date().toISOString();
   const [job] = await db.insert(mediaJobs).values({

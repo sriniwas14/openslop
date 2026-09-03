@@ -35,6 +35,7 @@ function toContentItem(row: any): ContentItem {
     aiScore: Math.round(55 + Math.random() * 35),
     format,
     mediaUrl: row.mediaUrl ?? null,
+    templateId: row.templateId ?? null,
   }
 }
 
@@ -180,15 +181,14 @@ export default function CreateContentDialog({
     setGenerating(true)
     setGenerateError(null)
     try {
-      // ponytail: structure injected into visualStyle — guides script beats without new API field
-      const visualStyle = selectedTemplate.structure ? `${selectedTemplate.prompt}\nStructure: ${selectedTemplate.structure}` : selectedTemplate.prompt
+      // ponytail: template FK drives rendering — style injected server-side
       const row = await generateFromIdea(company.id, {
         idea: selectedIdea,
         selectedHook: selectedIdea.hooks[0],
         kind: TALKING_HEAD,
         duration,
         influencerId: selectedInfluencerId,
-        visualStyle,
+        templateId: selectedTemplate.id,
       })
       onCreate(toContentItem(row))
       onOpenChange(false)
@@ -260,6 +260,7 @@ export default function CreateContentDialog({
                             <div className="relative mt-auto p-3.5 pt-10">
                               <div className="line-clamp-2 text-[15px] font-extrabold leading-tight text-white drop-shadow-[0_1px_2px_rgba(0,0,0,0.8)]">{t.title}</div>
                               {t.structure && <div className="mt-0.5 line-clamp-1 text-[11px] font-semibold text-white/75">{t.structure}</div>}
+                              <div className="mt-0.5 line-clamp-1 text-[11px] font-medium text-white/65">{t.style}</div>
                               <div className="mt-1 line-clamp-2 text-[12.5px] font-semibold leading-snug text-white/90 drop-shadow-[0_1px_1px_rgba(0,0,0,0.6)]">{t.prompt}</div>
                             </div>
                           </button>
@@ -307,7 +308,7 @@ export default function CreateContentDialog({
                   <DialogTitle className="text-lg">Pick an idea</DialogTitle>
                   <DialogDescription>
                     {company ? `Ideas from ${company.name}'s brand persona` : 'Ideas from your brand persona'} — talking head, {duration}s
-                    {selectedTemplate ? ` · ${selectedTemplate.title}${selectedTemplate.structure ? ` · ${selectedTemplate.structure}` : ''}` : ''}
+                    {selectedTemplate ? ` · ${selectedTemplate.title}${selectedTemplate.structure ? ` · ${selectedTemplate.structure}` : ''}${selectedTemplate.style ? ` · ${selectedTemplate.style}` : ''}` : ''}
                   </DialogDescription>
                 </div>
               </div>

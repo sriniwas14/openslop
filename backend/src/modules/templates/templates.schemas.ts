@@ -7,6 +7,7 @@ export const contentTemplateResponseSchema = z.object({
   previewImage: z.string(),
   duration: z.enum(["15", "30", "45"]),
   structure: z.string().nullable(),
+  style: z.string(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -19,6 +20,7 @@ export function mapTemplateRow(row: any) {
     previewImage: row.previewImage ?? row.preview_image,
     duration: String(row.duration ?? row.duration_text ?? "15"),
     structure: row.structure ?? null,
+    style: String(row.style ?? ""),
     createdAt: row.createdAt ?? row.created_at,
     updatedAt: row.updatedAt ?? row.updated_at,
   };

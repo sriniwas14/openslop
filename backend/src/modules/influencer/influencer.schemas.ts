@@ -40,16 +40,6 @@ export const previewInfluencerSchema = z.object({
   name: z.string().max(100).optional(),
 });
 
-export const editPreviewSchema = z.object({
-  prompt: z.string().min(3).max(500).trim(),
-});
-
-export const updateInfluencerSchema = z.object({
-  name: z.string().min(1).max(100).optional(),
-  imageUrl: z.string().max(2048).optional(),
-  prompt: z.string().max(5000).optional(),
-}).refine((v) => !!v.imageUrl || !!v.name, { message: "name or imageUrl required" });
-
 export const companyIdParamsSchema = z.object({ companyId: z.string().min(1) });
 export const influencerIdParamsSchema = z.object({ id: z.string().min(1) });
 export const errorResponseSchema = z.object({ error: z.string() });

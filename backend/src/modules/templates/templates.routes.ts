@@ -26,11 +26,12 @@ export async function templateRoutes(app: FastifyInstance) {
       } catch (e: any) {
         const msg = String(e?.message ?? "");
         if (msg.includes("no such table")) {
-          await db.run(`CREATE TABLE IF NOT EXISTS content_template (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, prompt TEXT NOT NULL, preview_image TEXT NOT NULL, duration TEXT NOT NULL DEFAULT '15', structure TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)` as any);
+          await db.run(`CREATE TABLE IF NOT EXISTS content_template (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, prompt TEXT NOT NULL, preview_image TEXT NOT NULL, duration TEXT NOT NULL DEFAULT '15', structure TEXT, style TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)` as any);
           rows = await db.select().from(contentTemplates).orderBy(desc(contentTemplates.createdAt));
         } else if (msg.includes("no such column")) {
           try { await db.run(`ALTER TABLE content_template ADD COLUMN duration TEXT NOT NULL DEFAULT '15'` as any); } catch {}
           try { await db.run(`ALTER TABLE content_template ADD COLUMN structure TEXT` as any); } catch {}
+          try { await db.run(`ALTER TABLE content_template ADD COLUMN style TEXT NOT NULL DEFAULT ''` as any); } catch {}
           rows = await db.select().from(contentTemplates).orderBy(desc(contentTemplates.createdAt));
         } else throw e;
       }

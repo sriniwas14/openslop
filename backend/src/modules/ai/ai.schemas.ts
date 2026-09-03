@@ -75,36 +75,6 @@ export const generatedContentSchema = z.object({
   aiScore: z.number().int().min(0).max(100),
 });
 
-// UGC post generated from a saved scraped post as inspiration
-export const generateUgcBodySchema = z.object({
-  companyId: z.string().min(1),
-  postId: z.string().min(1),
-});
-
-export const ugcContentSchema = z.object({
-  title: z.string(),
-  hook: z.string(),
-  caption: z.string(),
-  hashtags: z.array(z.string()),
-  platforms: z.array(z.string()),
-  aiScore: z.number().int().min(0).max(100),
-  sourcePostId: z.string(),
-});
-
-// UGC image step 1 — start the image job for a generated idea
-export const generateUgcImageBodySchema = z.object({
-  companyId: z.string().min(1),
-  hook: z.string().min(1).max(500),
-  postId: z.string().min(1).optional(),
-});
-
-// UGC image step 2 — overlay text on the completed image
-export const generateUgcOverlayBodySchema = z.object({
-  jobId: z.string().min(1),
-  headline: z.string().min(1).max(180),
-  subtext: z.string().max(80).optional(),
-});
-
 export const errorResponseSchema = z.object({ error: z.string() });
 
 export const preferencesSchema = z.object({

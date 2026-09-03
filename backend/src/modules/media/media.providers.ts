@@ -220,27 +220,99 @@ async function pollVertex(input: MediaInput, operation: string): Promise<MediaPo
   throw new Error("Vertex Veo completed without a video output");
 }
 
-// ponytail: OpenRouter /images is synchronous — b64_json returned inline (can take 60-90s)
+// ponytail: OpenRouter — image is sync (/images), video is async (/videos) — same key, different path
 async function startOpenRouter(input: MediaInput): Promise<MediaPollResult> {
   if (!input.apiKey) throw new Error("OpenRouter API key is required (store in Settings → AI Providers)");
-  if (input.task !== "image") throw new Error("OpenRouter supports image generation only — use Runway, Vertex or Luma for video");
   const base = (input.baseUrl || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
+  if (input.task === "image") {
+    const body: Record<string, unknown> = {
+      model: input.model,
+      prompt: input.prompt.slice(0, 5000),
+      aspect_ratio: boxAspectRatio(input.format),
+    };
+    if (input.inputUrl) body.input_references = [{ type: "image_url", image_url: { url: input.inputUrl } }];
+    const result = await providerJson(`${base}/images`, {
+      method: "POST",
+      headers: jsonHeaders({ Authorization: `Bearer ${input.apiKey}` }),
+      body: JSON.stringify(body),
+    });
+    const image = result?.data?.[0];
+    const url = image?.url ?? image?.image_url?.url;
+    if (url) return { status: "completed", outputUrl: String(url) };
+    if (!image?.b64_json) throw new Error("OpenRouter returned no image output");
+    return { status: "completed", outputUrl: `data:${image.media_type ?? "image/png"};base64,${image.b64_json}` };
+  }
+  // video — async, proxied models like google/veo-3, openai/sora-*, bytedance/seedance-*
   const body: Record<string, unknown> = {
     model: input.model,
     prompt: input.prompt.slice(0, 5000),
     aspect_ratio: boxAspectRatio(input.format),
   };
-  if (input.inputUrl) body.input_references = [{ type: "image_url", image_url: { url: input.inputUrl } }];
-  const result = await providerJson(`${base}/images`, {
-    method: "POST",
-    headers: jsonHeaders({ Authorization: `Bearer ${input.apiKey}` }),
-    body: JSON.stringify(body),
-  });
-  const image = result?.data?.[0];
-  const url = image?.url ?? image?.image_url?.url;
-  if (url) return { status: "completed", outputUrl: String(url) };
-  if (!image?.b64_json) throw new Error("OpenRouter returned no image output");
-  return { status: "completed", outputUrl: `data:${image.media_type ?? "image/png"};base64,${image.b64_json}` };
+  if (input.inputUrl) {
+    body.input_references = [{ type: "image_url", image_url: { url: input.inputUrl } }];
+    body.reference_image = input.inputUrl;
+    body.image_url = input.inputUrl;
+  }
+  // try canonical /videos, fallback to /videos/generations if 404
+  let result: any = null;
+  let lastErr: any = null;
+  for (const path of ["/videos", "/videos/generations"]) {
+    try {
+      result = await providerJson(`${base}${path}`, {
+        method: "POST",
+        headers: jsonHeaders({ Authorization: `Bearer ${input.apiKey}` }),
+        body: JSON.stringify(body),
+      });
+      lastErr = null;
+      break;
+    } catch (e: any) {
+      const msg = String(e?.message ?? "");
+      if (msg.includes("404") && path === "/videos") { lastErr = e; continue; }
+      throw e;
+    }
+  }
+  if (lastErr) throw lastErr;
+  // sync video (rare) — some models return url/b64 immediately
+  const directUrl = result?.data?.[0]?.url ?? result?.data?.[0]?.video_url ?? result?.url ?? result?.video_url ?? result?.output?.[0] ?? result?.output;
+  if (directUrl && typeof directUrl === "string") return { status: "completed", outputUrl: String(directUrl) };
+  const b64 = result?.data?.[0]?.b64_json ?? result?.b64_json;
+  if (b64) return { status: "completed", outputUrl: `data:video/mp4;base64,${b64}` };
+  const id = result?.id ?? result?.data?.[0]?.id ?? result?.generation_id ?? result?.task_id;
+  if (!id) throw new Error("OpenRouter video did not return a generation id — response: " + JSON.stringify(result).slice(0, 800));
+  return { status: "processing", providerTaskId: String(id) };
+}
+
+async function pollOpenRouter(input: MediaInput, taskId: string): Promise<MediaPollResult> {
+  if (!input.apiKey) throw new Error("OpenRouter API key is required");
+  const base = (input.baseUrl || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
+  if (input.task === "image") throw new Error("OpenRouter image generation completes synchronously — job should not need polling");
+  const paths = [`/videos/${encodeURIComponent(taskId)}`, `/videos/generations/${encodeURIComponent(taskId)}`, `/generations/${encodeURIComponent(taskId)}`];
+  let result: any = null;
+  let lastErr: any = null;
+  for (const p of paths) {
+    try {
+      result = await providerJson(`${base}${p}`, { headers: jsonHeaders({ Authorization: `Bearer ${input.apiKey}` }) });
+      lastErr = null;
+      break;
+    } catch (e: any) {
+      const msg = String(e?.message ?? "");
+      if (msg.includes("404")) { lastErr = e; continue; }
+      throw e;
+    }
+  }
+  if (lastErr) throw lastErr;
+  const statusRaw = String(result?.status ?? result?.state ?? result?.data?.[0]?.status ?? "").toLowerCase();
+  if (["succeeded", "completed", "done"].includes(statusRaw)) {
+    const url = result?.output?.[0] ?? result?.data?.[0]?.url ?? result?.data?.[0]?.video_url ?? result?.url ?? result?.video_url ?? result?.output_url;
+    if (url) return { status: "completed", providerTaskId: taskId, outputUrl: String(url) };
+    const b64 = result?.data?.[0]?.b64_json ?? result?.b64_json ?? result?.output_b64;
+    if (b64) return { status: "completed", providerTaskId: taskId, outputUrl: `data:video/mp4;base64,${b64}` };
+    throw new Error("OpenRouter video completed without an output URL — response: " + JSON.stringify(result).slice(0, 800));
+  }
+  if (["failed", "error", "cancelled"].includes(statusRaw)) {
+    return { status: "failed", providerTaskId: taskId, error: String(result?.error ?? result?.failure_reason ?? result?.message ?? "OpenRouter video generation failed").slice(0, 2000) };
+  }
+  return { status: "processing", providerTaskId: taskId };
 }
 
 async function startLuma(input: MediaInput): Promise<MediaPollResult> {
@@ -283,7 +355,7 @@ export async function startMedia(input: MediaInput): Promise<MediaPollResult> {
 export async function pollMedia(input: MediaInput, providerTaskId: string): Promise<MediaPollResult> {
   if (input.provider === "runway") return pollRunway(input, providerTaskId);
   if (input.provider === "vertex") return pollVertex(input, providerTaskId);
-  if (input.provider === "openrouter") throw new Error("OpenRouter image generation completes synchronously — job should not need polling");
+  if (input.provider === "openrouter") return pollOpenRouter(input, providerTaskId);
   if (input.provider === "luma") return pollLuma(input, providerTaskId);
   throw new Error(`${input.provider} does not have a media generation adapter`);
 }

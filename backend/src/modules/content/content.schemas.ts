@@ -117,8 +117,6 @@ export const generateFromIdeaSchema = z.object({
   title: z.string().min(1).max(255).optional(),
   duration: z.number().int().refine((v) => [15, 30, 45].includes(v), { message: "duration must be 15, 30 or 45" }).optional(),
   influencerId: z.string().min(1).optional(),
-  // ponytail: template visual style — just a prompt string, no FK
-  visualStyle: z.string().min(1).max(5000).optional(),
 }).refine((v) => !!v.idea || !!v.ideaId, { message: "idea or ideaId required" });
 
 // ponytail: helpers — sqlite stores JSON as text; parse on read, stringify on write

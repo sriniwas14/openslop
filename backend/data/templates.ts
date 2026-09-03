@@ -1,11 +1,20 @@
 // ponytail: static seed — no DB call here, imported by migrate.ts and inserted once
 export const CONTENT_TEMPLATES = [
   {
+    title: "CarterPCs Tech Reel",
+    prompt: "Create a fast-paced vertical tech video with the energy of a high-end PC build and tech YouTube Short. Open with an immediate visual hook, rapidly introduce the product or idea, then move through close-up hardware shots, hands-on demonstrations, screen recordings, and punchy visual explanations. Keep narration concise and conversational, with frequent visual changes and satisfying transitions. Emphasize performance, specs, practical benefits, and a strong payoff at the end.",
+    previewImage: "https://picsum.photos/seed/template-carterpcs-tech/540/960",
+    duration: "30",
+    structure: "hook (3s) → setup (5s) → rapid feature/demo sequence (15s) → payoff (4s) → CTA (3s)",
+    style: "CarterPCs-inspired tech creator aesthetic, dark modern studio, RGB-lit PC hardware, tight macro close-ups, handheld product shots, dynamic push-ins, overhead desk shots, crisp high-contrast lighting, shallow depth of field, fast jump cuts, energetic motion graphics, bold minimal captions, clean tech UI overlays, punchy transitions"
+  },
+  {
     title: "Product Launch Carousel",
     prompt: "Create a bold 1080x1080 carousel announcing a new product drop — 5 slides: hook, problem, feature breakdown, social proof, CTA. Vibrant, modern, clean typography on pastel gradients.",
     previewImage: "https://picsum.photos/seed/template-product-launch/540/960",
     duration: "15",
     structure: "hook (5s) → problem (5s) → CTA (5s)",
+    style: "vibrant studio, top-down + 45° product angles, pastel gradients, crisp shadowless light, bold modern type",
   },
   {
     title: "Founder Story Talking Head",
@@ -13,6 +22,7 @@ export const CONTENT_TEMPLATES = [
     previewImage: "https://picsum.photos/seed/template-founder-story/540/960",
     duration: "15",
     structure: "hook (5s) → story (5s) → insight (5s)",
+    style: "eye-level 35mm, shallow depth of field, warm window light, slight handheld, blurred office background",
   },
   {
     title: "Before / After Greenscreen",
@@ -20,6 +30,7 @@ export const CONTENT_TEMPLATES = [
     previewImage: "https://picsum.photos/seed/template-before-after/540/960",
     duration: "30",
     structure: "hook (5s) → before (10s) → after (10s) → CTA (5s)",
+    style: "straight-on greenscreen, split-screen, punchy hard light, energetic jump cuts, tight framing",
   },
   {
     title: "Myth Busting Carousel",
@@ -27,6 +38,7 @@ export const CONTENT_TEMPLATES = [
     previewImage: "https://picsum.photos/seed/template-myth-busting/540/960",
     duration: "30",
     structure: "myth 1 (10s) → truth 1 (10s) → myth 2+3 (10s)",
+    style: "flat-lay minimal, bold icon overlays, high-key white light, centered overhead angle",
   },
   {
     title: "Testimonial Talking Head",
@@ -34,6 +46,7 @@ export const CONTENT_TEMPLATES = [
     previewImage: "https://picsum.photos/seed/template-testimonial/540/960",
     duration: "30",
     structure: "result (5s) → journey (15s) → recommend (10s)",
+    style: "handheld UGC, 50mm close-up, shallow depth of field, natural window light, authentic home background",
   },
   {
     title: "How-It-Works Greenscreen",
@@ -41,6 +54,7 @@ export const CONTENT_TEMPLATES = [
     previewImage: "https://picsum.photos/seed/template-how-it-works/540/960",
     duration: "45",
     structure: "problem (10s) → 3 steps (25s) → CTA (10s)",
+    style: "over-shoulder + screen capture, 24mm wide, clean professional light, precise framing, arrow callouts",
   },
   {
     title: "Weekly Tips Carousel",
@@ -48,6 +62,7 @@ export const CONTENT_TEMPLATES = [
     previewImage: "https://picsum.photos/seed/template-weekly-tips/540/960",
     duration: "45",
     structure: "intro (5s) → 3 tips (30s) → CTA (10s)",
+    style: "clean carousel grid, consistent brand header, even studio light, straight-on centered framing",
   },
   {
     title: "Problem → Solution Talking Head",
@@ -55,5 +70,6 @@ export const CONTENT_TEMPLATES = [
     previewImage: "https://picsum.photos/seed/template-problem-solution/540/960",
     duration: "15",
     structure: "pain (5s) → solution (5s) → hook (5s)",
+    style: "fast-cut 35mm, eye-level, captioned, shallow depth of field, urgent push-in, warm contrast",
   },
 ] as const;

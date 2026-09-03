@@ -461,14 +461,10 @@ export async function contentRoutes(app: FastifyInstance) {
           ? `{"title": string, "images": [{"url": string (use https://picsum.photos/seed/<slug>/1080/1080 as placeholder if no real asset), "text": string}] (4-7 slides)}`
           : `{"title": string, "scripts": [{"type": "aroll"|"broll", "prompt": string}] (3-5 beats, at least one aroll), "format": "vertical"|"horizontal"}`;
 
-      // ponytail: template visual style — appended to script prompt when present
-      const visualStyle = (body as any).visualStyle as string | undefined;
-      const visualStyleBlock = visualStyle ? `\nVisual style (from template): """${visualStyle.slice(0, 4000)}""" — apply this look/mood consistently to all scripts/broll prompts, framing and captions.\n` : "";
-
       let res;
       try {
         res = await agent.generate(
-          `Brand: ${company.name}\nPersona:\n"""${company.persona!.slice(0, 6000)}"""\n\nSelected idea:\nTitle: ${idea.title}\nPain point: ${idea.painPoint}\nAngle: ${idea.angle ?? ""}\nHooks: ${idea.hooks.join(" | ")}\nSelected hook: "${selectedHook}"\nKind: ${finalKind}${visualStyleBlock}\n\nWrite the FULL script/content for this kind using the selected hook as the opening line. Respond with ONLY this JSON shape:\n${shapeHint}\n` +
+          `Brand: ${company.name}\nPersona:\n"""${company.persona!.slice(0, 6000)}"""\n\nSelected idea:\nTitle: ${idea.title}\nPain point: ${idea.painPoint}\nAngle: ${idea.angle ?? ""}\nHooks: ${idea.hooks.join(" | ")}\nSelected hook: "${selectedHook}"\nKind: ${finalKind}\n\nWrite the FULL script/content for this kind using the selected hook as the opening line. Respond with ONLY this JSON shape:\n${shapeHint}\n` +
             `- title: reuse or refine "${title}", <=90 chars, brand voice\n` +
             (finalKind === "carousel"
               ? `- images: 4-7 slides; each text 10-220 chars, url must be a valid https URL (picsum placeholder ok)\n`
