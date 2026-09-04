@@ -38,8 +38,9 @@ export const DEFAULT_OVERLAY_CONFIG: OverlayConfig = {
   text: '',
   fontFamily: "'Inter Variable', 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif",
   fontWeight: 800,
-  // ~26% smaller than the previous 0.82/0.068 defaults so the block reads as
-  // a headline (65–75% of video width) instead of dominating the frame.
+  // Compact sizing for the smaller feed viewport: the base fraction targets
+  // ~11.6px at a ~507px-wide canvas, and the engine derives every rendered
+  // size from container width, so text scales down together with the media.
   // Sizing stays fully responsive: derived from container width + adapted to
   // text length / line count by computeOverlayLayout below.
   maxWidthPct: 0.70,
@@ -48,7 +49,7 @@ export const DEFAULT_OVERLAY_CONFIG: OverlayConfig = {
   textAlign: 'center',
   textColor: '#FFFFFF',
   strokeColor: '#000000',
-  fontSizePct: 0.05,
+  fontSizePct: 0.069,
   /** Fraction of output width — scaled proportionally to resolution. */
   strokeWidthPct: 0.004,
   shadowColor: 'rgba(0,0,0,0.45)',
@@ -57,7 +58,7 @@ export const DEFAULT_OVERLAY_CONFIG: OverlayConfig = {
   shadowOffsetXPct: 0,
   position: { x: 0.50, y: 0.46 },
   safeArea: { top: 0.10, bottom: 0.12, left: 0.07, right: 0.07 },
-  minFontSizePct: 0.02,
+  minFontSizePct: 0.036,
 }
 
 // ---------------------------------------------------------------------------
@@ -115,7 +116,7 @@ export type CompositionPreset = {
   x: number
   /** % from top (block centre). */
   y: number
-  /** Base font size as fraction of media width; defaults to 0.05. */
+  /** Base font size as fraction of media width; defaults to 0.023. */
   size?: number
   /** Max text width as fraction of media width; defaults to 0.70. */
   maxWidthPct?: number
@@ -127,7 +128,7 @@ export const DEFAULT_COMPOSITION: Required<Pick<CompositionPreset, 'x' | 'y'>> &
   Pick<CompositionPreset, 'size' | 'maxWidthPct'> = {
   x: 50,
   y: 48,
-  size: 0.05,
+  size: 0.069,
   maxWidthPct: 0.70,
 }
 
@@ -135,7 +136,7 @@ export const COMPOSITION_BY_FORMAT: Record<string, CompositionPreset> = {
   // Text IS the hero — centred, controlled width.
   wall_of_text_slide: { x: 50, y: 46, directive: 'Centre the headline text over the background; text is the hero of this slide.' },
   // Scroll-stopping hook — upper third, prominent but not enormous.
-  video_hook: { x: 50, y: 26, size: 0.045, directive: 'Place the hook text in the upper third; keep the main subject fully visible.' },
+  video_hook: { x: 50, y: 26, size: 0.069, directive: 'Place the hook text in the upper third; keep the main subject fully visible.' },
   // Person is the hero — text above, clear of the face zone.
   talking_head: { x: 50, y: 24, directive: 'Place text in the empty space above the person; never cover the face.' },
   ugc_video: { x: 50, y: 26, directive: 'Place text in the space around the creator; keep face and product in hand visible.' },
@@ -145,17 +146,17 @@ export const COMPOSITION_BY_FORMAT: Record<string, CompositionPreset> = {
   // Product is the hero — text above it.
   product_demo: { x: 50, y: 24, directive: 'Place text above the product; keep product, packaging and demonstrating hands visible.' },
   // Screen/UI is the hero — thin top strip, UI stays interactive-looking.
-  screen_recording: { x: 50, y: 14, size: 0.042, maxWidthPct: 0.78, directive: 'Place text in the top strip only; never cover buttons, navigation or the demonstrated feature.' },
-  mobile_app: { x: 50, y: 86, size: 0.042, maxWidthPct: 0.78, directive: 'Place text below the phone/app UI; never cover the app interaction.' },
-  website_demo: { x: 50, y: 14, size: 0.042, maxWidthPct: 0.78, directive: 'Place text in the top strip only; never cover the website element being demonstrated.' },
+  screen_recording: { x: 50, y: 14, size: 0.066, maxWidthPct: 0.78, directive: 'Place text in the top strip only; never cover buttons, navigation or the demonstrated feature.' },
+  mobile_app: { x: 50, y: 86, size: 0.066, maxWidthPct: 0.78, directive: 'Place text below the phone/app UI; never cover the app interaction.' },
+  website_demo: { x: 50, y: 14, size: 0.066, maxWidthPct: 0.78, directive: 'Place text in the top strip only; never cover the website element being demonstrated.' },
   // Animated subject is the hero — text above it.
   clay_motion: { x: 50, y: 24, directive: 'Place text above the animated subject; keep the main animation fully visible.' },
 }
 
 /** Meme uses a two-block setup/punchline composition, not the single-block presets. */
 export const MEME_COMPOSITION = {
-  setup: { x: 50, y: 18, size: 0.045, directive: 'Place the setup line at the very top of the image.' },
-  punchline: { x: 50, y: 82, size: 0.045, directive: 'Place the punchline at the very bottom of the image.' },
+  setup: { x: 50, y: 18, size: 0.069, directive: 'Place the setup line at the very top of the image.' },
+  punchline: { x: 50, y: 82, size: 0.069, directive: 'Place the punchline at the very bottom of the image.' },
 } as const
 
 export function compositionForFormat(contentFormat: string | null | undefined): CompositionPreset {

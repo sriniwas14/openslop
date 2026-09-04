@@ -1,27 +1,33 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react'
 import {
   AlertTriangle,
-  Bookmark,
-  Heart,
+  Check,
   Loader2,
-  MessageCircle,
+  Pencil,
   Play,
-  Send,
   Volume2,
   VolumeX,
+  X,
   XCircle,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { useToast } from '@/components/ui/toast'
-import { type FeedItem, type VisualSearchStatus, visualSrc } from '@/services/visual'
-import { platformMeta, formatLabel, visualStatusMeta, typeLabel } from '@/components/feed/data'
+import { type FeedItem, visualSrc } from '@/services/visual'
+import { platformMeta, formatLabel, typeLabel } from '@/components/feed/data'
 import MediaTextOverlay, { overlayBlocksForContent, type OverlayBlock } from '@/components/feed/MediaTextOverlay'
 import OverlayEditorDialog from '@/components/feed/OverlayEditorDialog'
 
 // ---------------------------------------------------------------------------
-// An Instagram-style post card: avatar/header, 4:5 media (image or video),
-// action row (heart/comment/share/save), caption, and content badges.
+// Content review card: centered minimal approval UI.
+//
+//   [ Content Type ] [ Platform · Format ]
+//            [ MAIN 19:16 POST ]
+//     [ Reject ] [ Edit ] [ Review ]
+//
+// The 19:16 media is viewport-aware: its width is capped so pills + media +
+// actions fit comfortably inside the viewport without scrolling. All actions
+// sit OUTSIDE the media in a dedicated row underneath it.
 // ---------------------------------------------------------------------------
 
 type Props = {
@@ -32,6 +38,7 @@ type Props = {
 
 export default function ContentFeedItem({ item, isActive }: Props) {
   const { content, visual, visualStatus } = item
+  const { toast } = useToast()
   const baseSrc = visualSrc(visual)
 
   // Overlay layers + custom image live on the card. Popup edits work on a
@@ -40,18 +47,27 @@ export default function ContentFeedItem({ item, isActive }: Props) {
   const [imageOverride, setImageOverride] = useState<string | null>(null)
   const [editorOpen, setEditorOpen] = useState(false)
   const [editorSelectedId, setEditorSelectedId] = useState<string | null>(null)
+  // Natural media dimensions — the viewport shrink-fits each post's actual
+  // content so portrait video never sits in an oversized landscape box.
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null)
   const overrideRef = useRef<string | null>(null)
   overrideRef.current = imageOverride
 
   // Fresh layers per post.
   useEffect(() => {
     setBlocks(overlayBlocksForContent(content))
+    setNatural(null)
     setImageOverride((prev) => {
       if (prev) URL.revokeObjectURL(prev)
       return null
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content.id])
+
+  const reportNaturalSize = useCallback((w: number, h: number) => {
+    if (!w || !h) return
+    setNatural((prev) => (prev && Math.abs(prev.w / prev.h - w / h) < 0.01 ? prev : { w, h }))
+  }, [])
 
   // Never leak an uploaded object URL when the card unmounts.
   useEffect(
@@ -65,10 +81,22 @@ export default function ContentFeedItem({ item, isActive }: Props) {
     setBlocks((prev) => prev.map((b) => (b.id === id ? { ...b, ...p } : b)))
   }, [])
 
-  const openEditor = useCallback((id: string) => {
+  const openEditor = useCallback((id: string | null) => {
     setEditorSelectedId(id)
     setEditorOpen(true)
   }, [])
+
+  const handleEdit = useCallback(() => {
+    openEditor(blocks[0]?.id ?? null)
+  }, [blocks, openEditor])
+
+  const handleReject = useCallback(() => {
+    toast({ title: 'Rejected', description: 'This post was marked as rejected.', variant: 'default' })
+  }, [toast])
+
+  const handleReview = useCallback(() => {
+    toast({ title: 'Marked as reviewed', variant: 'success' })
+  }, [toast])
 
   const applyEditor = useCallback((nextBlocks: OverlayBlock[], nextImage: string | null) => {
     setBlocks(nextBlocks)
@@ -86,92 +114,104 @@ export default function ContentFeedItem({ item, isActive }: Props) {
   const isReview = visualStatus === 'needs_review'
 
   const platform = platformMeta(content.platform)
+  const typePill = typeLabel(content.contentType) || formatLabel(content.contentFormat)
+  const campaignPill = `${platform.label} · ${formatLabel(content.contentFormat)}`
+
+  // Viewport aspect follows the actual media (clamped to sane bounds);
+  // portrait 9:16 until the media reports its dimensions. The width formula
+  // derives viewport width from available viewport height, so container and
+  // media always scale together and the full frame stays visible.
+  const mediaAspect = natural
+    ? Math.min(1.9, Math.max(0.5, natural.w / natural.h))
+    : 9 / 16
 
   return (
-    <div className="overflow-hidden rounded-2xl border bg-card">
-      {/* Header */}
-      <div className="flex items-center gap-2.5 px-4 py-3">
-        <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">
-          {(content.title ?? content.platform)?.slice(0, 1).toUpperCase() ?? 'B'}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 text-sm font-semibold">
-            {content.title ?? 'Content'}
-            {content.cta && (
-              <span className="truncate text-xs font-normal text-muted-foreground">· {content.cta}</span>
-            )}
-          </div>
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span className={cn('size-1.5 rounded-full', platform.dot)} />
-            {platform.label} · {formatLabel(content.contentFormat)}
-          </div>
+    <article className="mx-auto flex w-full max-w-lg flex-col items-center gap-3 sm:gap-4">
+      {/* Top context pills — dynamic, from existing content data */}
+      <div className="flex flex-wrap items-center justify-center gap-2" aria-label="Post context">
+        <span className="inline-flex items-center rounded-full border border-transparent bg-muted px-3 py-1 text-xs font-medium text-foreground">
+          {typePill}
+        </span>
+        <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+          <span className={cn('size-1.5 rounded-full', platform.dot)} aria-hidden />
+          {campaignPill}
+        </span>
+      </div>
+
+      {/* Hero media — viewport shrink-fits the actual content: portrait
+          video gets a portrait box (no wide black side bars), and the
+          width derives from available viewport height so pills + media +
+          actions fit on one screen. Overlay text scales with this box
+          (fontSize = width × size fraction), so text shrinks together
+          with the media. The media element fills the container with
+          object-contain, so the full frame is always visible and never
+          cropped by it. Visually clean: no action buttons overlap it. */}
+      <div
+        style={{ '--ar': String(mediaAspect) } as CSSProperties}
+        className="w-[min(100%,max(12rem,calc((100dvh-16rem)*var(--ar))))] overflow-hidden rounded-2xl border bg-card shadow-md sm:w-[min(100%,max(12rem,calc((100dvh-20rem)*var(--ar))))]"
+      >
+        <div className="relative aspect-[var(--ar)] w-full bg-black">
+          {isPending ? (
+            <PendingVisual />
+          ) : isFailed ? (
+            <FailedVisual />
+          ) : isReview ? (
+            <ReviewVisual src={src} onNaturalSize={reportNaturalSize} />
+          ) : isVideo && src ? (
+            <VideoVisual src={src} isActive={isActive} poster={visual?.posterUrl ?? visual?.previewUrl} onNaturalSize={reportNaturalSize} />
+          ) : src ? (
+            <ImageVisual src={src} alt={visual?.altText ?? content.hook ?? 'Content visual'} onNaturalSize={reportNaturalSize} />
+          ) : (
+            <PendingVisual />
+          )}
+
+          {/* Read-only UGC-style text overlay. Tap a layer to open the visual
+              layout editor popup (draft-based, applies on Done). */}
+          {src && !isPending && !isFailed && (
+            <MediaTextOverlay
+              blocks={blocks}
+              selectedId={null}
+              draggable={false}
+              allowInlineEdit={false}
+              onSelect={() => {}}
+              onPatch={patchBlocks}
+              onTextClick={openEditor}
+            />
+          )}
         </div>
       </div>
 
-      {/* Media */}
-      <div className="relative aspect-[4/5] w-full bg-black">
-        {isPending ? (
-          <PendingVisual />
-        ) : isFailed ? (
-          <FailedVisual />
-        ) : isReview ? (
-          <ReviewVisual src={src} />
-        ) : isVideo ? (
-          <VideoVisual src={src} isActive={isActive} poster={visual?.posterUrl ?? visual?.previewUrl} />
-        ) : src ? (
-          <ImageVisual src={src} alt={visual?.altText ?? content.hook ?? 'Content visual'} />
-        ) : (
-          <PendingVisual />
-        )}
-
-        {/* Editable UGC-style text overlay over the media.
-            Tap a layer to open the visual layout editor popup — the card
-            itself stays non-editable so gestures here never mutate the feed:
-            drag/inline-typing are disabled, selection UI is off. */}
-        {src && !isPending && !isFailed && (
-          <MediaTextOverlay
-            blocks={blocks}
-            selectedId={null}
-            draggable={false}
-            allowInlineEdit={false}
-            onSelect={() => {}}
-            onPatch={patchBlocks}
-            onTextClick={openEditor}
-          />
-        )}
-
-        {/* Status chip */}
-        {!['matched', 'needs_review'].includes(visualStatus) && (
-          <div className="absolute top-3 right-3">
-            <StatusChip status={visualStatus} />
-          </div>
-        )}
-      </div>
-
-      {/* Action row */}
-      <PostActions />
-
-      {/* Caption */}
-      <div className="space-y-2 px-4 py-3">
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Badge label={typeLabel(content.contentType)} />
-          {content.contentAngleId && <Badge label="Angle" />}
-        </div>
-
-        {content.hook && (
-          <p className="text-sm font-semibold leading-snug">
-            <span className="mr-1 font-semibold text-foreground">{content.title ?? 'Content'}</span>
-            {content.hook}
-          </p>
-        )}
-
-        {content.body && (
-          <p className="line-clamp-3 text-sm leading-relaxed text-muted-foreground">{content.body}</p>
-        )}
-
-        {!content.body && content.script && (
-          <p className="line-clamp-3 text-sm leading-relaxed text-muted-foreground">{content.script}</p>
-        )}
+      {/* Action row — completely outside the media, underneath the post */}
+      <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3" role="group" aria-label="Review actions">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={handleReject}
+          className="h-10 rounded-full border-destructive/30 bg-white px-4 text-destructive shadow-sm hover:bg-destructive/10 hover:text-destructive sm:px-5 dark:bg-card"
+          aria-label="Reject post"
+        >
+          <X className="size-4 text-destructive" data-icon="inline-start" />
+          Reject
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={handleEdit}
+          className="h-10 rounded-full bg-white px-4 shadow-sm sm:px-5 dark:bg-card"
+          aria-label="Edit post"
+        >
+          <Pencil className="size-4" data-icon="inline-start" />
+          Edit
+        </Button>
+        <Button
+          type="button"
+          onClick={handleReview}
+          className="h-10 rounded-full border-transparent bg-success px-4 text-white shadow-sm hover:bg-success/90 sm:px-5"
+          aria-label="Review post"
+        >
+          <Check className="size-4" data-icon="inline-start" />
+          Review
+        </Button>
       </div>
 
       {/* Visual layout editor popup — draft editing, feed applies on Done */}
@@ -185,59 +225,10 @@ export default function ContentFeedItem({ item, isActive }: Props) {
         initialBlocks={blocks}
         initialImageOverride={imageOverride}
         initialSelectedId={editorSelectedId}
+        mediaAspect={mediaAspect}
         onApply={applyEditor}
       />
-    </div>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// Action row — Instagram-like (heart / comment / share / save). Visual only.
-// ---------------------------------------------------------------------------
-
-function PostActions() {
-  const [liked, setLiked] = useState(false)
-  const [saved, setSaved] = useState(false)
-  const { toast } = useToast()
-
-  const toggleLike = useCallback(() => {
-    setLiked((v) => !v)
-    if (!liked) toast({ title: 'Liked', variant: 'success' })
-  }, [liked, toast])
-
-  const toggleSave = useCallback(() => {
-    setSaved((v) => !v)
-    toast({ title: saved ? 'Removed from saved' : 'Saved to library', variant: 'success' })
-  }, [saved, toast])
-
-  const share = useCallback(() => {
-    toast({ title: 'Share coming soon', variant: 'default' })
-  }, [toast])
-
-  return (
-    <div className="flex items-center gap-1 px-2 pt-2">
-      <Button variant="ghost" size="icon-sm" className="text-foreground" onClick={toggleLike} aria-label="Like">
-        <Heart className={cn('size-5', liked && 'fill-destructive text-destructive')} />
-      </Button>
-      <Button variant="ghost" size="icon-sm" className="text-foreground" aria-label="Comment">
-        <MessageCircle className="size-5" />
-      </Button>
-      <Button variant="ghost" size="icon-sm" className="text-foreground" onClick={share} aria-label="Share">
-        <Send className="size-5" />
-      </Button>
-      <span className="flex-1" />
-      <Button variant="ghost" size="icon-sm" className="text-foreground" onClick={toggleSave} aria-label="Save">
-        <Bookmark className={cn('size-5', saved && 'fill-foreground')} />
-      </Button>
-    </div>
-  )
-}
-
-function Badge({ label }: { label: string }) {
-  return (
-    <span className="inline-flex items-center rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
-      {label}
-    </span>
+    </article>
   )
 }
 
@@ -245,7 +236,7 @@ function Badge({ label }: { label: string }) {
 // Image visual
 // ---------------------------------------------------------------------------
 
-function ImageVisual({ src, alt }: { src: string; alt: string }) {
+function ImageVisual({ src, alt, onNaturalSize }: { src: string; alt: string; onNaturalSize?: (w: number, h: number) => void }) {
   const [loaded, setLoaded] = useState(false)
   const [error, setError] = useState(false)
 
@@ -267,10 +258,14 @@ function ImageVisual({ src, alt }: { src: string; alt: string }) {
           alt={alt}
           loading="lazy"
           decoding="async"
-          onLoad={() => setLoaded(true)}
+          onLoad={(e) => {
+            setLoaded(true)
+            const im = e.currentTarget
+            if (im.naturalWidth && im.naturalHeight) onNaturalSize?.(im.naturalWidth, im.naturalHeight)
+          }}
           onError={() => setError(true)}
           className={cn(
-            'h-full w-full object-cover transition-opacity duration-500',
+            'h-full w-full object-contain transition-opacity duration-500',
             loaded ? 'opacity-100' : 'opacity-0',
           )}
         />
@@ -283,7 +278,7 @@ function ImageVisual({ src, alt }: { src: string; alt: string }) {
 // Video visual — plays only when active, autoplays muted, loop.
 // ---------------------------------------------------------------------------
 
-function VideoVisual({ src, isActive, poster }: { src: string; isActive: boolean; poster?: string | null }) {
+function VideoVisual({ src, isActive, poster, onNaturalSize }: { src: string; isActive: boolean; poster?: string | null; onNaturalSize?: (w: number, h: number) => void }) {
   const ref = useRef<HTMLVideoElement>(null)
   const [muted, setMuted] = useState(true)
   const [playing, setPlaying] = useState(false)
@@ -306,6 +301,11 @@ function VideoVisual({ src, isActive, poster }: { src: string; isActive: boolean
     }
   }, [isActive])
 
+  // Keep the element's muted flag in sync with state (autoplay requires muted).
+  useEffect(() => {
+    if (ref.current) ref.current.muted = muted
+  }, [muted])
+
   const togglePlay = useCallback(() => {
     const v = ref.current
     if (!v) return
@@ -319,10 +319,7 @@ function VideoVisual({ src, isActive, poster }: { src: string; isActive: boolean
   }, [])
 
   const toggleMute = useCallback(() => {
-    const v = ref.current
-    if (!v) return
-    v.muted = !v.muted
-    setMuted(v.muted)
+    setMuted((m) => !m)
   }, [])
 
   return (
@@ -331,12 +328,16 @@ function VideoVisual({ src, isActive, poster }: { src: string; isActive: boolean
         ref={ref}
         src={src}
         poster={poster ?? undefined}
-        muted={muted}
+        muted
         loop
         playsInline
         preload={isActive ? 'auto' : 'metadata'}
         onClick={togglePlay}
-        className="h-full w-full object-cover"
+        onLoadedMetadata={(e) => {
+          const v = e.currentTarget
+          if (v.videoWidth && v.videoHeight) onNaturalSize?.(v.videoWidth, v.videoHeight)
+        }}
+        className="h-full w-full object-contain"
       />
 
       {showPlayBtn && !playing && (
@@ -390,22 +391,20 @@ function FailedVisual() {
   )
 }
 
-function ReviewVisual({ src }: { src: string | null }) {
+function ReviewVisual({ src, onNaturalSize }: { src: string | null; onNaturalSize?: (w: number, h: number) => void }) {
   if (!src) return <PendingVisual />
   return (
     <div className="relative h-full w-full">
-      <img src={src} alt="Visual pending review" className="h-full w-full object-cover opacity-80" />
+      <img
+        src={src}
+        alt="Visual pending review"
+        onLoad={(e) => {
+          const im = e.currentTarget
+          if (im.naturalWidth && im.naturalHeight) onNaturalSize?.(im.naturalWidth, im.naturalHeight)
+        }}
+        className="h-full w-full object-contain opacity-80"
+      />
       <div className="absolute inset-0 bg-black/20" />
-    </div>
-  )
-}
-
-function StatusChip({ status }: { status: VisualSearchStatus }) {
-  const meta = visualStatusMeta(status)
-  return (
-    <div className={cn('flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium', meta.badge)}>
-      <meta.icon className={cn('size-3', meta.spin && 'animate-spin')} />
-      {meta.label}
     </div>
   )
 }

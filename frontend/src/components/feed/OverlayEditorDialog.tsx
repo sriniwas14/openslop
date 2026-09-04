@@ -37,6 +37,8 @@ type Props = {
   initialImageOverride: string | null
   /** Layer that was tapped to open the popup — pre-selected in the draft. */
   initialSelectedId: string | null
+  /** Content-fitted viewport aspect (w/h) measured by the feed card. */
+  mediaAspect?: number | null
   onApply: (blocks: OverlayBlock[], imageOverride: string | null) => void
 }
 
@@ -50,6 +52,7 @@ export default function OverlayEditorDialog({
   initialBlocks,
   initialImageOverride,
   initialSelectedId,
+  mediaAspect,
   onApply,
 }: Props) {
   const [draftBlocks, setDraftBlocks] = useState<OverlayBlock[]>(initialBlocks)
@@ -159,7 +162,7 @@ export default function OverlayEditorDialog({
 
         <div className="grid max-h-[70vh] gap-4 overflow-auto pr-1 md:grid-cols-[minmax(0,1fr)_260px]">
           {/* Live visual layout preview — same renderer as the feed card */}
-          <div ref={previewRef} className="relative aspect-[4/5] w-full overflow-hidden rounded-lg bg-black">
+          <div ref={previewRef} style={{ aspectRatio: String(mediaAspect ?? 9 / 16) }} className="relative w-full overflow-hidden rounded-lg bg-black">
             {showVideo ? (
               <video
                 src={effectiveSrc!}
@@ -168,10 +171,10 @@ export default function OverlayEditorDialog({
                 loop
                 playsInline
                 autoPlay
-                className="h-full w-full object-cover"
+                className="h-full w-full object-contain"
               />
             ) : effectiveSrc ? (
-              <img src={effectiveSrc} alt={content.hook ?? 'Content visual'} className="h-full w-full object-cover" />
+              <img src={effectiveSrc} alt={content.hook ?? 'Content visual'} className="h-full w-full object-contain" />
             ) : (
               <div className="flex h-full w-full items-center justify-center text-sm text-white/50">
                 No visual yet — upload an image to preview.

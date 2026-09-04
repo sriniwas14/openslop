@@ -58,10 +58,10 @@ export default function VideoStage({
 
   // CSS variables the inner media element reads for object-position so the
   // cover crop can be re-anchored without re-rendering the video element.
-  const mediaStyle: CSSProperties = {
+  const mediaStyle = {
     '--media-x': `${media.positionX * 100}%`,
     '--media-y': `${media.positionY * 100}%`,
-  }
+  } as CSSProperties
 
   return (
     <div

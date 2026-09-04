@@ -103,7 +103,7 @@ export default function ContentFeed() {
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-xl flex-col gap-4" ref={containerRef}>
+    <div className="mx-auto flex w-full max-w-xl flex-col gap-6 px-4 py-4 sm:py-6" ref={containerRef}>
       {items.map((item, idx) => (
         <div
           key={item.content.id}

@@ -94,7 +94,7 @@ export function overlayBlocksForContent(content: GeneratedContentDoc): OverlayBl
   const hook = content.hook
   const body = content.body
   const preset = compositionForFormat(content.contentFormat)
-  const size = preset.size ?? 0.05
+  const size = preset.size ?? 0.069
 
   switch (content.contentFormat) {
     case 'meme':
