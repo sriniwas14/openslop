@@ -13,6 +13,11 @@ import SignIn from '@/pages/SignIn'
 import SignUp from '@/pages/SignUp'
 import Onboarding from '@/pages/Onboarding'
 import BrandIntelligence from '@/pages/BrandIntelligence'
+import OverviewTab from '@/pages/brand/OverviewTab'
+import IdentityTab from '@/pages/brand/IdentityTab'
+import AudienceTab from '@/pages/brand/AudienceTab'
+import VoiceTab from '@/pages/brand/VoiceTab'
+import MarketTab from '@/pages/brand/MarketTab'
 
 function RootRedirect() {
   const { data: session, isPending } = useSession()
@@ -36,7 +41,13 @@ export default function App() {
             <Route path="/dashboard/trending" element={<Trending />} />
             <Route path="/dashboard/content" element={<ContentPage />} />
             <Route path="/dashboard/feed" element={<ContentFeed />} />
-            <Route path="/dashboard/brand" element={<BrandIntelligence />} />
+            <Route path="/dashboard/brand" element={<BrandIntelligence />}>
+              <Route index element={<OverviewTab />} />
+              <Route path="identity" element={<IdentityTab />} />
+              <Route path="audience" element={<AudienceTab />} />
+              <Route path="voice" element={<VoiceTab />} />
+              <Route path="market" element={<MarketTab />} />
+            </Route>
             <Route path="/dashboard/influencers" element={<InfluencersPage />} />
             <Route path="/dashboard/settings" element={<Settings />} />
             <Route path="/dashboard/creators" element={<Creators />} />

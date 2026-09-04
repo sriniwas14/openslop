@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Brain, Compass, Loader2, Mic, Package, Sparkles, Tag } from 'lucide-react'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { Brain, Loader2, Sparkles } from 'lucide-react'
 import { useCompany } from '@/context/CompanyContext'
 import { useBrandAnalysis } from '@/context/BrandAnalysisContext'
 import { useToast } from '@/components/ui/toast'
@@ -7,53 +8,44 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { getBrandIntelligence, type BrandIntelligenceDoc } from '@/services/brand'
 import BrandHeader from '@/components/brand/BrandHeader'
-import SimpleSection from '@/components/brand/SimpleSection'
-import AudienceSection from '@/components/brand/AudienceSection'
-import ContentAnglesSection from '@/components/brand/ContentAnglesSection'
-import MarketSection from '@/components/brand/MarketSection'
-import type { FieldConfig } from '@/components/brand/shared'
-
-const BRAND_FIELDS: FieldConfig[] = [
-  { key: 'name', label: 'Name', type: 'text', maxLength: 255 },
-  { key: 'website', label: 'Website', type: 'url', maxLength: 2048, placeholder: 'https://example.com' },
-  { key: 'tagline', label: 'Tagline', type: 'text', maxLength: 500 },
-  { key: 'description', label: 'Description', type: 'textarea', rows: 3, maxLength: 4000 },
-  { key: 'industry', label: 'Industry', type: 'text', maxLength: 255 },
-  { key: 'category', label: 'Category', type: 'text', maxLength: 255 },
-]
-
-const IDENTITY_FIELDS: FieldConfig[] = [
-  { key: 'coreIdentity', label: 'Core identity', type: 'textarea', rows: 3, maxLength: 4000 },
-  { key: 'productOffering', label: 'Product / offering', type: 'textarea', rows: 3, maxLength: 4000 },
-  { key: 'productFeatures', label: 'Product features', type: 'list' },
-  { key: 'productBenefits', label: 'Product benefits', type: 'list' },
-  { key: 'useCases', label: 'Use cases', type: 'list' },
-  { key: 'uniqueBenefits', label: 'Unique benefits', type: 'list' },
-  { key: 'problemSolution', label: 'Problem → solution', type: 'textarea', rows: 3, maxLength: 4000 },
-]
-
-const POSITIONING_FIELDS: FieldConfig[] = [
-  { key: 'mission', label: 'Mission', type: 'textarea', rows: 2, maxLength: 4000 },
-  { key: 'vision', label: 'Vision', type: 'textarea', rows: 2, maxLength: 4000 },
-  { key: 'valueProposition', label: 'Value proposition', type: 'textarea', rows: 2, maxLength: 4000 },
-  { key: 'marketPositioning', label: 'Market positioning', type: 'textarea', rows: 2, maxLength: 4000 },
-  { key: 'differentiation', label: 'Differentiation', type: 'textarea', rows: 2, maxLength: 4000 },
-  { key: 'ownedSpace', label: 'Owned space', type: 'textarea', rows: 2, maxLength: 4000 },
-]
-
-const TONE_FIELDS: FieldConfig[] = [
-  { key: 'tone', label: 'Tone', type: 'list' },
-  { key: 'personality', label: 'Personality', type: 'list' },
-  { key: 'dos', label: 'Do', type: 'list' },
-  { key: 'donts', label: "Don't", type: 'list' },
-  { key: 'wordsToUse', label: 'Words to use', type: 'list' },
-  { key: 'wordsToAvoid', label: 'Words to avoid', type: 'list' },
-  { key: 'writingStyle', label: 'Writing style', type: 'textarea', rows: 3, maxLength: 4000 },
-]
+import { BrandTabProvider } from './brand/BrandTabContext'
 
 function isEmptyDoc(d: BrandIntelligenceDoc | null): boolean {
   if (!d) return true
   return !d.brand.name && !d.brand.description && !d.identityAndProduct.productOffering && d.contentAngles.length === 0
+}
+
+type TabKey = 'overview' | 'identity' | 'audience' | 'voice' | 'market'
+
+const TABS: { key: TabKey; label: string; path: string }[] = [
+  { key: 'overview', label: 'Overview', path: '/dashboard/brand' },
+  { key: 'identity', label: 'Identity', path: '/dashboard/brand/identity' },
+  { key: 'audience', label: 'Audience', path: '/dashboard/brand/audience' },
+  { key: 'voice', label: 'Voice', path: '/dashboard/brand/voice' },
+  { key: 'market', label: 'Market', path: '/dashboard/brand/market' },
+]
+
+function TabStrip() {
+  return (
+    <div className="flex gap-2 border-b">
+      {TABS.map((t) => (
+        <NavLink
+          key={t.key}
+          to={t.path}
+          end={t.key === 'overview'}
+          className={({ isActive }) =>
+            `-mb-px border-b-2 px-3 py-2 text-sm ${
+              isActive
+                ? 'border-foreground font-medium'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`
+          }
+        >
+          {t.label}
+        </NavLink>
+      ))}
+    </div>
+  )
 }
 
 export default function BrandIntelligence() {
@@ -64,9 +56,9 @@ export default function BrandIntelligence() {
 
   const [doc, setDoc] = useState<BrandIntelligenceDoc | null>(null)
   const [loading, setLoading] = useState(true)
+  const location = useLocation()
 
   const companyId = selectedId
-  // analyzing when the global background tracker is polling this company, or the row says so
   const analyzing = isAnalyzing(companyId) || doc?.status === 'analyzing'
 
   const load = useCallback(
@@ -84,8 +76,6 @@ export default function BrandIntelligence() {
     [toast],
   )
 
-  // reload on company change AND whenever the background tracker bumps the token
-  // (analysis started / completed / failed) so this page reflects the new state.
   useEffect(() => {
     if (companyId) load(companyId)
     else {
@@ -104,6 +94,8 @@ export default function BrandIntelligence() {
   }
   const handleError = (msg: string) => toast({ title: 'Something went wrong', description: msg, variant: 'error' })
 
+  const showShell = !!companyId && (!company ? !companiesLoading : true)
+
   return (
     <div className="grid gap-4">
       <div className="grid gap-1">
@@ -113,7 +105,7 @@ export default function BrandIntelligence() {
         </p>
       </div>
 
-      {!companyId || (!company && !companiesLoading) ? (
+      {!showShell ? (
         <Card>
           <CardContent className="py-10 text-center text-sm text-muted-foreground">
             Select a company to view its Brand Intelligence.
@@ -169,56 +161,12 @@ export default function BrandIntelligence() {
             analyzing={analyzing}
             onAnalyze={handleAnalyze}
           />
-
-          <SimpleSection
-            companyId={companyId}
-            doc={doc}
-            section="brand"
-            title="Brand"
-            description="The essentials — name, site, category and one-line story."
-            icon={Tag}
-            fields={BRAND_FIELDS}
-            onSaved={handleSaved}
-          />
-
-          <SimpleSection
-            companyId={companyId}
-            doc={doc}
-            section="identityAndProduct"
-            title="Identity & product"
-            description="What the brand is, what it sells and the problem it solves."
-            icon={Package}
-            fields={IDENTITY_FIELDS}
-            onSaved={handleSaved}
-          />
-
-          <SimpleSection
-            companyId={companyId}
-            doc={doc}
-            section="purposeAndPositioning"
-            title="Purpose & positioning"
-            description="Mission, vision and the space the brand owns in the market."
-            icon={Compass}
-            fields={POSITIONING_FIELDS}
-            onSaved={handleSaved}
-          />
-
-          <AudienceSection companyId={companyId} doc={doc} onSaved={handleSaved} onError={handleError} />
-
-          <SimpleSection
-            companyId={companyId}
-            doc={doc}
-            section="toneAndVoice"
-            title="Tone & voice"
-            description="How the brand sounds — personality, do/don't and word choices."
-            icon={Mic}
-            fields={TONE_FIELDS}
-            onSaved={handleSaved}
-          />
-
-          <ContentAnglesSection companyId={companyId} doc={doc} onSaved={handleSaved} onError={handleError} />
-
-          <MarketSection companyId={companyId} doc={doc} onSaved={handleSaved} onError={handleError} />
+          <TabStrip />
+          <BrandTabProvider value={{ companyId, doc, onSaved: handleSaved, onError: handleError }}>
+            <div key={location.pathname} className="grid gap-4">
+              <Outlet />
+            </div>
+          </BrandTabProvider>
         </div>
       )}
     </div>
