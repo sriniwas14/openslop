@@ -13,13 +13,14 @@ export const AI_PROVIDERS = [
   "vertex",
   "fal",
   "luma",
+  "kling",
   "ollama",
   "custom",
 ] as const;
 
 export type AiProvider = (typeof AI_PROVIDERS)[number];
 
-export const DISCOVERY_ONLY_PROVIDERS = new Set<AiProvider>(["runway", "vertex", "fal", "luma"]);
+export const DISCOVERY_ONLY_PROVIDERS = new Set<AiProvider>(["runway", "vertex", "fal", "luma", "kling"]);
 
 // mastra's built-in model router reads these itself; a missing key surfaces as a
 // clear runtime error naming the var when you actually generate:

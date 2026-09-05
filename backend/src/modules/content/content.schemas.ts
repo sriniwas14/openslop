@@ -26,6 +26,7 @@ const baseContentFields = {
   format: z.enum(["vertical", "horizontal"]).optional(),
   duration: z.number().int().refine((v) => [15, 30, 45].includes(v), { message: "duration must be 15, 30 or 45" }).optional(),
   influencerId: z.string().min(1).optional(),
+  templateId: z.string().min(1).optional(),
   scheduledAt: z.string().datetime({ offset: true }).nullable().optional(),
 };
 
@@ -77,6 +78,7 @@ export const contentResponseSchema = z.object({
   format: z.enum(["vertical", "horizontal"]).nullable(),
   duration: z.number().int().nullable(),
   influencerId: z.string().nullable(),
+  templateId: z.string().nullable(),
   scheduledAt: z.string().nullable(),
   createdAt: z.string(),
   updatedAt: z.string(),
@@ -117,6 +119,7 @@ export const generateFromIdeaSchema = z.object({
   title: z.string().min(1).max(255).optional(),
   duration: z.number().int().refine((v) => [15, 30, 45].includes(v), { message: "duration must be 15, 30 or 45" }).optional(),
   influencerId: z.string().min(1).optional(),
+  templateId: z.string().min(1).optional(),
 }).refine((v) => !!v.idea || !!v.ideaId, { message: "idea or ideaId required" });
 
 // ponytail: helpers — sqlite stores JSON as text; parse on read, stringify on write
@@ -126,6 +129,7 @@ export function parseContentRow(row: {
   format: string | null;
   duration: string | number | null;
   influencerId?: string | null;
+  templateId?: string | null;
   scheduledAt: string | null;
   [k: string]: unknown;
 }) {
@@ -139,6 +143,7 @@ export function parseContentRow(row: {
     format: row.format as "vertical" | "horizontal" | null,
     duration: Number.isFinite(duration as number) ? (duration as number) : null,
     influencerId: (row.influencerId as string | null) ?? (row as any).influencer_id ?? null,
+    templateId: (row.templateId as string | null) ?? (row as any).template_id ?? null,
     scheduledAt: (row.scheduledAt as string | null) ?? null,
   };
 }
@@ -150,6 +155,7 @@ export function serializeContentInput(input: z.infer<typeof createContentSchema>
     scheduledAt: input.scheduledAt ? new Date(input.scheduledAt).toISOString() : null,
     duration: (input as any).duration ?? null,
     influencerId: (input as any).influencerId ?? null,
+    templateId: (input as any).templateId ?? null,
     images: input.images ? JSON.stringify(input.images) : null,
     scripts: input.scripts ? JSON.stringify(input.scripts) : null,
   };

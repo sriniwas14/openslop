@@ -60,8 +60,23 @@ export function getContent(contentId: string): Promise<ContentRow> {
   return fetch(`/contents/${contentId}`, { credentials: 'include' }).then(handle<ContentRow>)
 }
 
-export function renderVideo(contentId: string, body?: { templateId?: string }): Promise<ContentRow> {
-  return fetch(`/contents/${contentId}/render`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined }).then(handle<ContentRow>)
+export function renderVideo(contentId: string, body?: { templateId?: string }): Promise<RenderStatus> {
+  return fetch(`/contents/${contentId}/render`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : '{}' }).then(handle<RenderStatus>)
+}
+
+export type RenderStatus = {
+  contentId: string
+  status: 'queued' | 'rendering' | 'completed' | 'failed'
+  total: number
+  done: number
+  expectedSeconds: number
+  actualSeconds: number | null
+  mediaUrl: string | null
+  error: string | null
+}
+
+export function getRenderStatus(contentId: string): Promise<RenderStatus> {
+  return fetch(`/contents/${contentId}/render-status`, { credentials: 'include' }).then(handle<RenderStatus>)
 }
 
 export type ContentTemplate = {

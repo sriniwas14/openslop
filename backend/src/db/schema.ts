@@ -9,6 +9,8 @@ export const aiConfigs = sqliteTable(
     userId: text("user_id").notNull(),
     provider: text("provider").notNull(),
     apiKey: text("api_key"),
+    accessKey: text("access_key"), // Kling Ak
+    secretKey: text("secret_key"), // Kling Sk
     serviceAccountJson: text("service_account_json"),
     baseUrl: text("base_url"),
     projectId: text("project_id"),
@@ -66,6 +68,7 @@ export const contents = sqliteTable(
     format: text("format"), // vertical | horizontal | null
     duration: text("duration"), // 15|30|45 seconds for video, null for carousel
     influencerId: text("influencer_id"), // single influencer for talkinghead
+    templateId: text("template_id"), // visual style template driving duration + render vibe
     scheduledAt: text("scheduled_at"), // ISO datetime, nullable (optional — drafts may omit)
     createdAt: text("created_at")
       .notNull()
@@ -169,6 +172,25 @@ export const influencers = sqliteTable(
   ],
 );
 
+// ponytail: global visual styles — duration drives N=duration/5 video chunks
+export const contentTemplates = sqliteTable("content_template", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  title: text("title").notNull(),
+  prompt: text("prompt").notNull(),
+  previewImage: text("preview_image").notNull(),
+  duration: text("duration").notNull().default("15"), // 15|30|45
+  structure: text("structure"),
+  style: text("style").notNull().default(""),
+  createdAt: text("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+
 export type Company = typeof companies.$inferSelect;
 export type NewCompany = typeof companies.$inferInsert;
 export type AiConfig = typeof aiConfigs.$inferSelect;
@@ -179,3 +201,4 @@ export type AiPreferences = typeof aiPreferences.$inferSelect;
 export type OnboardingProgress = typeof onboardingProgress.$inferSelect;
 export type MediaJob = typeof mediaJobs.$inferSelect;
 export type Influencer = typeof influencers.$inferSelect;
+export type ContentTemplate = typeof contentTemplates.$inferSelect;

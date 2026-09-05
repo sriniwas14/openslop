@@ -13,7 +13,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
 import { useCompany } from '@/context/CompanyContext'
-import { fetchIdeas, generateFromIdea, listContentTemplates, type ContentTemplate, type Idea } from '@/services/content'
+import { fetchIdeas, generateFromIdea, listContentTemplates, renderVideo, type ContentTemplate, type Idea } from '@/services/content'
 import { listInfluencers, type InfluencerRow } from '@/services/influencers'
 import { CONTENT_TYPES, type ContentItem } from './data'
 
@@ -35,6 +35,7 @@ function toContentItem(row: any): ContentItem {
     aiScore: Math.round(55 + Math.random() * 35),
     format,
     mediaUrl: row.mediaUrl ?? null,
+    duration: row.duration ?? null,
     templateId: row.templateId ?? null,
   }
 }
@@ -57,7 +58,10 @@ export default function CreateContentDialog({
 
   // ponytail: duration locked from template, no picker
   const [duration, setDuration] = useState<15 | 30 | 45>(15)
-  const [step, setStep] = useState<'templates' | 'ideas'>('templates')
+  const [step, setStep] = useState<'templates' | 'ideas' | 'ready'>('templates')
+  const [createdRow, setCreatedRow] = useState<any | null>(null)
+  const [rendering, setRendering] = useState(false)
+  const [renderError, setRenderError] = useState<string | null>(null)
 
   // templates — visual style for talkinghead only (ponytail: no kind, fixed)
   const [templates, setTemplates] = useState<ContentTemplate[] | null>(null)
@@ -102,6 +106,9 @@ export default function CreateContentDialog({
     setSelectedInfluencerId(null)
     setGenerating(false)
     setGenerateError(null)
+    setCreatedRow(null)
+    setRendering(false)
+    setRenderError(null)
   }, [open])
 
   const loadTemplates = useCallback(async () => {
@@ -190,8 +197,9 @@ export default function CreateContentDialog({
         influencerId: selectedInfluencerId,
         templateId: selectedTemplate.id,
       })
-      onCreate(toContentItem(row))
-      onOpenChange(false)
+      // ponytail: final screen — user picks Render-in-background vs Dismiss, no auto-render race
+      setCreatedRow(row)
+      setStep('ready')
     } catch (e) {
       setGenerateError(e instanceof Error ? e.message : 'Generation failed — try again.')
     } finally {
@@ -297,7 +305,7 @@ export default function CreateContentDialog({
               </Button>
             </DialogFooter>
           </>
-        ) : (
+        ) : step === 'ideas' ? (
           <>
             <DialogHeader>
               <div className="flex items-center gap-2.5">
@@ -425,6 +433,54 @@ export default function CreateContentDialog({
               <Button onClick={handleGenerate} disabled={!selectedIdea || generating || !selectedInfluencerId}>
                 {generating && <Loader2 className="animate-spin" data-icon="inline-start" />}
                 {generating ? 'Generating…' : 'Generate'}
+              </Button>
+            </DialogFooter>
+          </>
+        ) : (
+          <>
+            <DialogHeader>
+              <DialogTitle className="text-lg">Ready to render</DialogTitle>
+              <DialogDescription>
+                Script generated — start the {duration}s render in the background, or dismiss and render later from Content.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-2 rounded-xl border bg-muted/30 p-3.5 text-sm">
+              <div className="font-semibold leading-snug">{createdRow?.title ?? selectedIdea?.title}</div>
+              <div className="text-xs text-muted-foreground">
+                talking head · {duration}s · {duration / 5} clips{selectedTemplate ? ` · ${selectedTemplate.title}` : ''}
+              </div>
+              {renderError && <p className="text-xs text-destructive">{renderError}</p>}
+            </div>
+            <DialogFooter className="sm:justify-between">
+              <Button
+                variant="ghost"
+                disabled={rendering}
+                onClick={() => {
+                  if (createdRow) onCreate(toContentItem(createdRow))
+                  onOpenChange(false)
+                }}
+              >
+                Later
+              </Button>
+              <Button
+                disabled={rendering || !createdRow}
+                onClick={async () => {
+                  if (!createdRow || rendering) return
+                  setRendering(true)
+                  setRenderError(null)
+                  try {
+                    await renderVideo(createdRow.id, selectedTemplate ? { templateId: selectedTemplate.id } : undefined)
+                    onCreate(toContentItem(createdRow))
+                    onOpenChange(false)
+                  } catch (e) {
+                    setRenderError(e instanceof Error ? e.message : 'Render failed to start')
+                  } finally {
+                    setRendering(false)
+                  }
+                }}
+              >
+                {rendering && <Loader2 className="animate-spin" data-icon="inline-start" />}
+                {rendering ? 'Starting render…' : `Render ${duration}s video`}
               </Button>
             </DialogFooter>
           </>

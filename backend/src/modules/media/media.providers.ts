@@ -1,3 +1,4 @@
+import { createHmac, createHash } from "node:crypto";
 import RunwayML, { TaskFailedError } from "@runwayml/sdk";
 import type { AiProvider } from "../../lib/mastra";
 
@@ -8,6 +9,8 @@ export type MediaInput = {
   provider: AiProvider;
   model: string;
   apiKey?: string | null;
+  accessKey?: string | null;
+  secretKey?: string | null;
   serviceAccountJson?: string | null;
   projectId?: string | null;
   location?: string | null;
@@ -17,6 +20,8 @@ export type MediaInput = {
   inputUrl?: string | null;
   format?: "vertical" | "horizontal" | null;
   configId?: string | null;
+  /** seconds per provider clip — the chunked renderer always sends 5; N chunks × 5s = duration */
+  durationSeconds?: number | null;
 };
 
 export type MediaPollResult = {
@@ -83,7 +88,7 @@ async function startRunway(input: MediaInput): Promise<MediaPollResult> {
       return { status: "processing", providerTaskId: String(id) };
     } else {
       if (!configId) throw new Error(`Runway Router configId is required for video (store in Settings → AI Providers → Runway configId)`);
-      const videoInput: any = { promptText: prompt, aspectRatio, resolution: "720p" as const, duration: 5, audio: true };
+      const videoInput: any = { promptText: prompt, aspectRatio, resolution: "720p" as const, duration: input.durationSeconds ?? 5, audio: true };
       if (input.inputUrl) {
         // Router video with source image: role required by API — "first" = open on this frame
         videoInput.referenceImages = [{ uri: input.inputUrl, role: "first" as const }];
@@ -185,9 +190,22 @@ async function startVertex(input: MediaInput): Promise<MediaPollResult> {
   const token = await vertexAccessToken(input.serviceAccountJson);
   const base = vertexBase(input);
   const isImage = input.task === "image";
+  const durationSeconds = input.durationSeconds ?? 5;
+  // ponytail: last-frame/influencer continuity — Veo image-to-video takes the reference
+  // image on the instance; data URIs only (our frames are resized data:image/jpeg)
+  let refImage: { bytesBase64Encoded: string; mimeType: string } | null = null;
+  if (!isImage && input.inputUrl?.startsWith("data:")) {
+    const comma = input.inputUrl.indexOf(",");
+    const mime = input.inputUrl.match(/^data:([^;]+);/)?.[1] ?? "image/jpeg";
+    const b64 = comma === -1 ? "" : input.inputUrl.slice(comma + 1);
+    if (b64) refImage = { bytesBase64Encoded: b64, mimeType: mime };
+  }
   const body = isImage
     ? { instances: [{ prompt: input.prompt }], parameters: { sampleCount: 1, aspectRatio: ratio(input.format) } }
-    : { instances: [{ prompt: input.prompt }], parameters: { aspectRatio: ratio(input.format), sampleCount: 1, durationSeconds: 5 } };
+    : {
+        instances: [{ prompt: input.prompt, ...(refImage ? { image: refImage } : {}) }],
+        parameters: { aspectRatio: ratio(input.format), sampleCount: 1, durationSeconds },
+      };
   const result = await providerJson(`${base}:${isImage ? "predict" : "predictLongRunning"}`, {
     method: "POST",
     headers: jsonHeaders({ Authorization: `Bearer ${token}` }),
@@ -315,6 +333,127 @@ async function pollOpenRouter(input: MediaInput, taskId: string): Promise<MediaP
   return { status: "processing", providerTaskId: taskId };
 }
 
+// ponytail: Kling uses HMAC-SHA256 over (path + body) signed with Sk. Ak/Sk come from DB columns
+// access_key / secret_key on ai_config. Exported so the dynamic model fetcher (ai.routes.ts)
+// can reuse the same canonical headers.
+type KlingAuth = { baseUrl: string; accessKey: string; secretKey: string };
+export function klingAuthHeaders(auth: KlingAuth, method: string, path: string, body: string): Record<string, string> {
+  const ts = String(Date.now());
+  const bodyHash = createHash("sha256").update(body).digest("hex");
+  const stringToSign = `${path}\n${method}\n${ts}\n${bodyHash}`;
+  const sig = createHmac("sha256", auth.secretKey).update(stringToSign).digest("base64");
+  return {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+    "X-TC-Action": path.split("/").pop() ?? "",
+    "X-TC-Version": "v1",
+    "X-TC-Timestamp": ts,
+    Authorization: `HMAC-SHA256 ak=${auth.accessKey}, ts=${ts}, sn=${stringToSign}, sig=${sig}`,
+  };
+}
+
+function klingBase(input: MediaInput): string {
+  return (input.baseUrl || "https://api.klingai.com").replace(/\/+$/, "");
+}
+
+function klingAuth(input: MediaInput): KlingAuth {
+  if (!input.accessKey || !input.secretKey) {
+    throw new Error("Kling requires accessKey (Ak) and secretKey (Sk) — store in Settings → AI Providers");
+  }
+  return { baseUrl: klingBase(input), accessKey: input.accessKey, secretKey: input.secretKey };
+}
+
+async function klingJson<T = any>(auth: KlingAuth, method: "GET" | "POST", path: string, body: any): Promise<T> {
+  const bodyStr = body === undefined ? "" : JSON.stringify(body);
+  const headers = klingAuthHeaders(auth, method, path, bodyStr);
+  const res = await fetch(`${auth.baseUrl}${path}`, { method, headers, body: method === "POST" ? bodyStr : undefined });
+  const text = await res.text();
+  let parsed: any = null;
+  try { parsed = text ? JSON.parse(text) : null; } catch { parsed = null; }
+  if (!res.ok) {
+    const message = parsed?.message ?? parsed?.error?.message ?? text;
+    throw new Error(`${res.status} ${res.statusText}: ${String(message).slice(0, 500)}`);
+  }
+  if (parsed && typeof parsed === "object" && parsed.code !== undefined && parsed.code !== 0) {
+    const message = parsed?.message ?? parsed?.data?.task_status_msg ?? "Kling rejected the request";
+    throw new Error(`Kling error (code ${parsed.code}): ${String(message).slice(0, 500)}`);
+  }
+  return parsed as T;
+}
+
+async function startKling(input: MediaInput): Promise<MediaPollResult> {
+  const auth = klingAuth(input);
+  if (input.task === "image") {
+    const body: Record<string, unknown> = {
+      model_name: input.model,
+      prompt: input.prompt.slice(0, 5000),
+      n: 1,
+      aspect_ratio: boxAspectRatio(input.format),
+    };
+    if (input.inputUrl) body.image = input.inputUrl;
+    const result = await klingJson<any>(auth, "POST", "/v1/images/generations", body);
+    const img = result?.data?.[0];
+    const url = img?.url;
+    if (url) return { status: "completed", outputUrl: String(url) };
+    if (img?.b64_json) return { status: "completed", outputUrl: `data:image/jpeg;base64,${img.b64_json}` };
+    if (img?.task_id && img?.task_status !== "succeed") {
+      // some Kling image plans return a task_id and complete async
+      return { status: "processing", providerTaskId: String(img.task_id) };
+    }
+    throw new Error("Kling image returned no output — response: " + JSON.stringify(result).slice(0, 800));
+  }
+  // video — text2video when no reference, image2video when an influencer/last-frame is present
+  const hasRef = Boolean(input.inputUrl);
+  const path = hasRef ? "/v1/videos/image2video" : "/v1/videos/text2video";
+  const body: Record<string, unknown> = {
+    model_name: input.model,
+    prompt: input.prompt.slice(0, 5000),
+    duration: String(input.durationSeconds ?? 5),
+    aspect_ratio: boxAspectRatio(input.format),
+    mode: "standard",
+  };
+  if (hasRef) body.image = input.inputUrl;
+  const result = await klingJson<any>(auth, "POST", path, body);
+  const taskId = result?.data?.task_id;
+  if (!taskId) throw new Error("Kling video did not return a task_id — response: " + JSON.stringify(result).slice(0, 800));
+  const status = String(result?.data?.task_status ?? "").toLowerCase();
+  if (status === "succeed" || status === "succeeded" || status === "completed") {
+    const url = result?.data?.task_result?.videos?.[0]?.url ?? result?.data?.videos?.[0]?.url;
+    if (url) return { status: "completed", outputUrl: String(url) };
+    throw new Error("Kling video completed without an output URL — response: " + JSON.stringify(result).slice(0, 800));
+  }
+  return { status: "processing", providerTaskId: String(taskId) };
+}
+
+async function pollKling(input: MediaInput, taskId: string): Promise<MediaPollResult> {
+  const auth = klingAuth(input);
+  // try text2video first, then image2video — Kling task_id is per-endpoint
+  let result: any = null;
+  let lastErr: any = null;
+  for (const path of [`/v1/videos/text2video/${encodeURIComponent(taskId)}`, `/v1/videos/image2video/${encodeURIComponent(taskId)}`, `/v1/images/generations/${encodeURIComponent(taskId)}`]) {
+    try {
+      result = await klingJson<any>(auth, "GET", path, undefined);
+      lastErr = null;
+      break;
+    } catch (e: any) {
+      const msg = String(e?.message ?? "");
+      if (msg.includes("404")) { lastErr = e; continue; }
+      throw e;
+    }
+  }
+  if (lastErr) throw lastErr;
+  const status = String(result?.data?.task_status ?? "").toLowerCase();
+  if (["succeed", "succeeded", "completed"].includes(status)) {
+    const url = result?.data?.task_result?.videos?.[0]?.url ?? result?.data?.task_result?.images?.[0]?.url ?? result?.data?.videos?.[0]?.url ?? result?.data?.images?.[0]?.url;
+    if (url) return { status: "completed", providerTaskId: taskId, outputUrl: String(url) };
+    throw new Error("Kling task completed without an output URL — response: " + JSON.stringify(result).slice(0, 800));
+  }
+  if (["failed", "error", "cancelled"].includes(status)) {
+    return { status: "failed", providerTaskId: taskId, error: String(result?.data?.task_status_msg ?? "Kling generation failed").slice(0, 2000) };
+  }
+  return { status: "processing", providerTaskId: taskId };
+}
+
 async function startLuma(input: MediaInput): Promise<MediaPollResult> {
   if (!input.apiKey) throw new Error("Luma API key is required");
   const body: Record<string, unknown> = { prompt: input.prompt, model: input.model, aspect_ratio: ratio(input.format) };
@@ -349,6 +488,7 @@ export async function startMedia(input: MediaInput): Promise<MediaPollResult> {
   if (input.provider === "vertex") return startVertex(input);
   if (input.provider === "openrouter") return startOpenRouter(input);
   if (input.provider === "luma") return startLuma(input);
+  if (input.provider === "kling") return startKling(input);
   throw new Error(`${input.provider} does not have a media generation adapter`);
 }
 
@@ -357,5 +497,6 @@ export async function pollMedia(input: MediaInput, providerTaskId: string): Prom
   if (input.provider === "vertex") return pollVertex(input, providerTaskId);
   if (input.provider === "openrouter") return pollOpenRouter(input, providerTaskId);
   if (input.provider === "luma") return pollLuma(input, providerTaskId);
+  if (input.provider === "kling") return pollKling(input, providerTaskId);
   throw new Error(`${input.provider} does not have a media generation adapter`);
 }

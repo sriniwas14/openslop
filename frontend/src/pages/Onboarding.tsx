@@ -33,6 +33,8 @@ export default function Onboarding() {
   const [prefs, setPrefs] = useState<AiPreferences>({ videoConfigId: null, videoModel: null, imageConfigId: null, imageModel: null, textConfigId: null, textModel: null })
   const [provider, setProvider] = useState<AiProvider>('openrouter')
   const [apiKey, setApiKey] = useState('')
+  const [accessKey, setAccessKey] = useState('')
+  const [secretKey, setSecretKey] = useState('')
   const [serviceAccountJson, setServiceAccountJson] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [projectId, setProjectId] = useState('')
@@ -52,6 +54,7 @@ export default function Onboarding() {
 
   const showBaseUrl = provider === 'ollama' || provider === 'custom'
   const showVertexSettings = provider === 'vertex'
+  const showKlingAuth = provider === 'kling'
   const [resolving, setResolving] = useState(false)
 
   const getCfg = (id: string | null) => configs.find((c) => c.id === id) ?? null
@@ -156,7 +159,7 @@ export default function Onboarding() {
     if (!provider) { setAiError('Select provider'); return }
     setProviderSaving(true)
     try {
-      const c = await createAiConfig({ provider, apiKey: apiKey || undefined, serviceAccountJson: serviceAccountJson || undefined, baseUrl: baseUrl || undefined, projectId: projectId || undefined, location: location || undefined, name: aiName || undefined, isDefault: configs.length===0 })
+      const c = await createAiConfig({ provider, apiKey: apiKey || undefined, accessKey: accessKey || undefined, secretKey: secretKey || undefined, serviceAccountJson: serviceAccountJson || undefined, baseUrl: baseUrl || undefined, projectId: projectId || undefined, location: location || undefined, name: aiName || undefined, isDefault: configs.length===0 })
       setApiKey(''); setServiceAccountJson(''); setBaseUrl(''); setProjectId(''); setLocation(''); setAiName('')
       setProviderDialogOpen(false)
       await refreshConfigsAndPrefs()
@@ -286,7 +289,7 @@ export default function Onboarding() {
                       <div key={c.id} className="flex items-center justify-between rounded-md border px-3 py-2">
                         <div className="min-w-0">
                           <div className="flex items-center gap-2"><span className="min-w-0 truncate text-sm font-medium">{c.name || AI_PROVIDER_LABELS[c.provider as AiProvider] || c.provider}</span><span className="rounded bg-muted px-1.5 py-0.5 text-xs">{AI_PROVIDER_LABELS[c.provider as AiProvider] || c.provider}</span>{c.isDefault && <span className="rounded bg-foreground px-1.5 py-0.5 text-xs text-background">default</span>}</div>
-                          <div className="truncate text-xs text-muted-foreground">{c.baseUrl ?? 'no baseUrl'} · {c.apiKeyMasked ?? 'no key'}</div>
+                          <div className="truncate text-xs text-muted-foreground">{c.baseUrl ?? 'no baseUrl'} · {c.provider === 'kling' ? (c.accessKeyMasked ?? 'no key') : (c.apiKeyMasked ?? 'no key')}</div>
                         </div>
                       </div>
                     ))}
@@ -356,7 +359,12 @@ export default function Onboarding() {
                   <form onSubmit={addProviderInOnboarding} className="grid gap-4">
                     <div className="grid gap-2"><Label>Provider</Label><select value={provider} onChange={(e) => setProvider(e.target.value as AiProvider)} className="h-10 rounded-md border bg-transparent px-3 text-sm">{AI_PROVIDERS.map((p) => <option key={p} value={p}>{AI_PROVIDER_LABELS[p]}</option>)}</select></div>
                     <div className="grid gap-2"><Label htmlFor="ob-ainame">Label (optional)</Label><Input id="ob-ainame" value={aiName} onChange={(e) => setAiName(e.target.value)} placeholder="My OpenRouter" maxLength={255} /></div>
-                    {provider !== 'vertex' && <div className="grid gap-2"><Label htmlFor="ob-key">API Key</Label><Input id="ob-key" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." />{provider === 'ollama' && <p className="text-xs text-muted-foreground">Ollama usually needs no key.</p>}{provider === 'fal' && <p className="text-xs text-muted-foreground">Use a fal.ai API key.</p>}</div>}
+                    {provider !== 'vertex' && provider !== 'kling' && <div className="grid gap-2"><Label htmlFor="ob-key">API Key</Label><Input id="ob-key" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder="sk-..." />{provider === 'ollama' && <p className="text-xs text-muted-foreground">Ollama usually needs no key.</p>}{provider === 'fal' && <p className="text-xs text-muted-foreground">Use a fal.ai API key.</p>}</div>}
+                    {showKlingAuth && <>
+                      <div className="grid gap-2"><Label htmlFor="ob-ak">Kling Access Key (Ak)</Label><Input id="ob-ak" type="password" value={accessKey} onChange={(e) => setAccessKey(e.target.value)} placeholder="ak-..." required /></div>
+                      <div className="grid gap-2"><Label htmlFor="ob-sk">Kling Secret Key (Sk)</Label><Input id="ob-sk" type="password" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} placeholder="sk-..." required /></div>
+                      <p className="text-xs text-muted-foreground">Get Ak/Sk from the Kling AI dashboard.</p>
+                    </>}
                     {showVertexSettings && <>
                       <div className="grid gap-2"><Label htmlFor="ob-service-account">Google service-account JSON</Label><textarea id="ob-service-account" value={serviceAccountJson} onChange={(e) => setServiceAccountJson(e.target.value)} placeholder='{"client_email":"...","private_key":"..."}' className="min-h-28 rounded-md border bg-transparent px-3 py-2 font-mono text-xs" required /></div>
                       <div className="grid gap-2"><Label htmlFor="ob-project">Google Cloud project ID</Label><Input id="ob-project" value={projectId} onChange={(e) => setProjectId(e.target.value)} placeholder="my-gcp-project" required /></div>

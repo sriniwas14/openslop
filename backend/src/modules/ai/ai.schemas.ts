@@ -4,6 +4,8 @@ import { AI_PROVIDERS } from "../../lib/mastra";
 const aiConfigFields = {
   provider: z.enum(AI_PROVIDERS),
   apiKey: z.string().max(2048).optional().or(z.literal("")),
+  accessKey: z.string().max(512).optional().or(z.literal("")),
+  secretKey: z.string().max(512).optional().or(z.literal("")),
   serviceAccountJson: z.string().max(20000).optional().or(z.literal("")),
   baseUrl: z.string().max(2048).optional().or(z.literal("")),
   projectId: z.string().max(255).optional().or(z.literal("")),
@@ -21,13 +23,26 @@ function requireVertexSettings(value: { provider?: string; projectId?: string; l
   }
 }
 
-export const createAiConfigSchema = z.object(aiConfigFields).superRefine(requireVertexSettings);
+function requireKlingAuth(value: { provider?: string; accessKey?: string; secretKey?: string }, ctx: z.RefinementCtx) {
+  if (value.provider === "kling") {
+    if (!value.accessKey?.trim()) ctx.addIssue({ code: "custom", path: ["accessKey"], message: "Kling accessKey (Ak) is required" });
+    if (!value.secretKey?.trim()) ctx.addIssue({ code: "custom", path: ["secretKey"], message: "Kling secretKey (Sk) is required" });
+  }
+}
 
-// PATCH may update an unrelated field on an existing Vertex config. Validate
-// the pair when either Vertex field is explicitly changed.
+export const createAiConfigSchema = z.object(aiConfigFields).superRefine((v, ctx) => {
+  requireVertexSettings(v, ctx);
+  requireKlingAuth(v, ctx);
+});
+
+// PATCH may update an unrelated field on an existing Vertex or Kling config. Validate
+// the pair when either provider-specific field is explicitly changed.
 export const updateAiConfigSchema = z.object(aiConfigFields).partial().superRefine((value, ctx) => {
   if (value.provider === "vertex" && (value.projectId !== undefined || value.location !== undefined)) {
     requireVertexSettings(value, ctx);
+  }
+  if (value.provider === "kling" && (value.accessKey !== undefined || value.secretKey !== undefined)) {
+    requireKlingAuth(value, ctx);
   }
 });
 
@@ -40,6 +55,8 @@ export const aiConfigResponseSchema = z.object({
   userId: z.string(),
   provider: z.string(),
   apiKeyMasked: z.string().nullable(),
+  accessKeyMasked: z.string().nullable(),
+  secretKeyMasked: z.string().nullable(),
   serviceAccountConfigured: z.boolean(),
   baseUrl: z.string().nullable(),
   projectId: z.string().nullable(),

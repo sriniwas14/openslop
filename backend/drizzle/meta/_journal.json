@@ -45,10 +45,17 @@
       "breakpoints": true
     },
     {
-      "idx": 6,
-      "version": "7",
-      "when": 1788009000000,
-      "tag": "0006_media_jobs",
+      "idx": 11,
+      "version": "6",
+      "when": 1788361000000,
+      "tag": "0011_content_template_fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1788362000000,
+      "tag": "0012_ai_config_kling_auth",
       "breakpoints": true
     }
   ]

@@ -28,6 +28,8 @@ function inputForJob(job: any, config: any): MediaInput {
     provider: config.provider,
     model: job.model,
     apiKey: config.apiKey,
+    accessKey: (config as any).accessKey,
+    secretKey: (config as any).secretKey,
     serviceAccountJson: config.serviceAccountJson,
     projectId: config.projectId,
     location: config.location,
@@ -37,6 +39,8 @@ function inputForJob(job: any, config: any): MediaInput {
     inputUrl: job.inputUrl,
     format: job.format ?? null,
     configId: (config as any).configId ?? (job as any).routerConfigId ?? null,
+    // ponytail: chunked renderer concatenates N×5s clips — single source of the "5"
+    durationSeconds: job.task === "video" ? 5 : null,
   };
 }
 
@@ -131,7 +135,7 @@ export async function createMediaJob(input: {
   configId?: string | null;
 }) {
   const { config, model } = await getMediaConfig(input.userId, input.task, input.configId);
-  const mediaProviders = ["runway", "vertex", "luma"];
+  const mediaProviders = ["runway", "vertex", "luma", "kling"];
   const isOpenRouter = config.provider === "openrouter";
   if (!mediaProviders.includes(config.provider) && !isOpenRouter) {
     throw new Error(`${config.provider} does not support media generation`);
@@ -169,8 +173,11 @@ export async function queueContentMedia(input: {
   format?: MediaFormat;
   influencerImageUrl?: string | null;
 }) {
-  const task: MediaTask = input.kind === "carousel" ? "image" : "video";
   const jobs: any[] = [];
+  const task: MediaTask = input.kind === "carousel" ? "image" : "video";
+  // ponytail: video renders explicitly via POST /contents/:id/render (N=duration/5 chunks).
+  // Auto-queueing a single 5s job here used to race render and short-circuit it to 5s.
+  if (task === "video") return jobs;
   try {
     if (task === "image") {
       for (const [index, image] of (input.images ?? []).entries()) {
@@ -182,14 +189,6 @@ export async function queueContentMedia(input: {
           outputIndex: index,
         }));
       }
-    } else if (input.scripts?.length) {
-      jobs.push(await createMediaJob({
-        ...input,
-        task,
-        prompt: input.scripts.map((script, index) => `Beat ${index + 1} (${script.type}): ${script.prompt}`).join("\n\n"),
-        inputUrl: input.influencerImageUrl ?? null,
-        outputIndex: null,
-      }));
     }
   } catch {
     // Content remains usable when media credentials are not configured. The

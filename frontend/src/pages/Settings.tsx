@@ -241,6 +241,8 @@ function AiProvidersTab() {
   const [error, setError] = useState<string | null>(null)
   const [provider, setProvider] = useState<AiProvider>('openrouter')
   const [apiKey, setApiKey] = useState('')
+  const [accessKey, setAccessKey] = useState('')
+  const [secretKey, setSecretKey] = useState('')
   const [serviceAccountJson, setServiceAccountJson] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [projectId, setProjectId] = useState('')
@@ -261,21 +263,22 @@ function AiProvidersTab() {
     } catch (e: any) { setError(e.message) } finally { setLoading(false) }
   }
   useEffect(() => { refresh() }, [])
-  function resetForm() { setProvider('openrouter'); setApiKey(''); setServiceAccountJson(''); setBaseUrl(''); setProjectId(''); setLocation(''); setConfigId(''); setName(''); setEditingId(null); setError(null) }
+  function resetForm() { setProvider('openrouter'); setApiKey(''); setAccessKey(''); setSecretKey(''); setServiceAccountJson(''); setBaseUrl(''); setProjectId(''); setLocation(''); setConfigId(''); setName(''); setEditingId(null); setError(null) }
   function openAdd() { resetForm(); setDialogOpen(true) }
-  function openEdit(c: AiConfig) { setEditingId(c.id); setProvider(c.provider as AiProvider); setApiKey(''); setServiceAccountJson(''); setBaseUrl(c.baseUrl ?? ''); setProjectId(c.projectId ?? ''); setLocation(c.location ?? ''); setConfigId((c as any).configId ?? ''); setName(c.name ?? ''); setDialogOpen(true) }
+  function openEdit(c: AiConfig) { setEditingId(c.id); setProvider(c.provider as AiProvider); setApiKey(''); setAccessKey(''); setSecretKey(''); setServiceAccountJson(''); setBaseUrl(c.baseUrl ?? ''); setProjectId(c.projectId ?? ''); setLocation(c.location ?? ''); setConfigId((c as any).configId ?? ''); setName(c.name ?? ''); setDialogOpen(true) }
   function closeDialog() { setDialogOpen(false); resetForm() }
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault(); setSaving(true); setError(null)
     try {
-      if (editingId) await updateAiConfig(editingId, { provider, apiKey: apiKey || undefined, serviceAccountJson: serviceAccountJson || undefined, baseUrl: baseUrl || undefined, projectId: projectId || undefined, location: location || undefined, configId: configId || undefined, name: name || undefined })
-      else await createAiConfig({ provider, apiKey: apiKey || undefined, serviceAccountJson: serviceAccountJson || undefined, baseUrl: baseUrl || undefined, projectId: projectId || undefined, location: location || undefined, configId: configId || undefined, name: name || undefined, isDefault: configs.length === 0 })
+      if (editingId) await updateAiConfig(editingId, { provider, apiKey: apiKey || undefined, accessKey: accessKey || undefined, secretKey: secretKey || undefined, serviceAccountJson: serviceAccountJson || undefined, baseUrl: baseUrl || undefined, projectId: projectId || undefined, location: location || undefined, configId: configId || undefined, name: name || undefined })
+      else await createAiConfig({ provider, apiKey: apiKey || undefined, accessKey: accessKey || undefined, secretKey: secretKey || undefined, serviceAccountJson: serviceAccountJson || undefined, baseUrl: baseUrl || undefined, projectId: projectId || undefined, location: location || undefined, configId: configId || undefined, name: name || undefined, isDefault: configs.length === 0 })
       closeDialog(); await refresh()
     } catch (e: any) { setError(e.message) } finally { setSaving(false) }
   }
   const showBaseUrl = provider === 'ollama' || provider === 'custom'
   const showVertexSettings = provider === 'vertex'
   const showRunwayConfig = provider === 'runway'
+  const showKlingAuth = provider === 'kling'
   const getCfg = (id: string | null) => configs.find((c) => c.id === id) ?? null
   return (
     <Card>
@@ -295,7 +298,7 @@ function AiProvidersTab() {
               <div key={c.id} className="flex items-center justify-between rounded-md border px-3 py-2">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2"><span className="min-w-0 truncate font-medium">{c.name || AI_PROVIDER_LABELS[c.provider as AiProvider] || c.provider}</span><span className="rounded bg-muted px-1.5 py-0.5 text-xs">{AI_PROVIDER_LABELS[c.provider as AiProvider] || c.provider}</span>{c.isDefault && <span className="rounded bg-foreground px-1.5 py-0.5 text-xs text-background">default</span>}</div>
-                  <div className="truncate text-xs text-muted-foreground">{(c as any).configId || c.model || 'no model'} · {c.provider === 'vertex' ? (c.serviceAccountConfigured ? 'service account configured' : 'no service account') : (c.apiKeyMasked ?? 'no key')} {c.baseUrl ? `· ${c.baseUrl}` : ''} {c.provider === 'vertex' && c.projectId ? `· ${c.projectId}/${c.location || 'default'}` : ''} {(c as any).configId ? `· config ${ (c as any).configId}` : ''}</div>
+                  <div className="truncate text-xs text-muted-foreground">{(c as any).configId || c.model || 'no model'} · {c.provider === 'vertex' ? (c.serviceAccountConfigured ? 'service account configured' : 'no service account') : c.provider === 'kling' ? (c.accessKeyMasked ?? 'no key') : (c.apiKeyMasked ?? 'no key')} {c.baseUrl ? `· ${c.baseUrl}` : ''} {c.provider === 'vertex' && c.projectId ? `· ${c.projectId}/${c.location || 'default'}` : ''} {(c as any).configId ? `· config ${ (c as any).configId}` : ''}</div>
                 </div>
                 <div className="flex gap-1">{!c.isDefault && <Button variant="outline" size="sm" onClick={async () => { await setDefaultAiConfig(c.id); await refresh() }}>Default</Button>}<Button variant="outline" size="sm" onClick={() => openEdit(c)}>Edit</Button><Button variant="ghost" size="sm" onClick={async () => { await deleteAiConfig(c.id); await refresh() }}>Delete</Button></div>
               </div>
@@ -374,7 +377,12 @@ function AiProvidersTab() {
             <form onSubmit={onSubmit} className="grid gap-4">
               <div className="grid gap-2"><Label>Provider</Label><select value={provider} onChange={(e) => setProvider(e.target.value as AiProvider)} className="h-10 rounded-md border bg-transparent px-3 text-sm">{AI_PROVIDERS.map((p) => <option key={p} value={p}>{AI_PROVIDER_LABELS[p]}</option>)}</select></div>
               <div className="grid gap-2"><Label htmlFor="ai-name">Label (optional)</Label><Input id="ai-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="My OpenRouter" maxLength={255} /></div>
-              {provider !== 'vertex' && <div className="grid gap-2"><Label htmlFor="ai-key">API Key</Label><Input id="ai-key" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={editingId ? 'leave blank to keep' : 'sk-...'} />{provider === 'ollama' && <p className="text-xs text-muted-foreground">Ollama usually needs no key.</p>}{provider === 'fal' && <p className="text-xs text-muted-foreground">Use a fal.ai API key.</p>}</div>}
+              {provider !== 'vertex' && provider !== 'kling' && <div className="grid gap-2"><Label htmlFor="ai-key">API Key</Label><Input id="ai-key" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} placeholder={editingId ? 'leave blank to keep' : 'sk-...'} />{provider === 'ollama' && <p className="text-xs text-muted-foreground">Ollama usually needs no key.</p>}{provider === 'fal' && <p className="text-xs text-muted-foreground">Use a fal.ai API key.</p>}</div>}
+              {showKlingAuth && <>
+                <div className="grid gap-2"><Label htmlFor="ai-ak">Kling Access Key (Ak)</Label><Input id="ai-ak" type="password" value={accessKey} onChange={(e) => setAccessKey(e.target.value)} placeholder={editingId ? 'leave blank to keep' : 'ak-...'} required={!editingId} /></div>
+                <div className="grid gap-2"><Label htmlFor="ai-sk">Kling Secret Key (Sk)</Label><Input id="ai-sk" type="password" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} placeholder={editingId ? 'leave blank to keep' : 'sk-...'} required={!editingId} /></div>
+                <p className="text-xs text-muted-foreground">Get Ak/Sk from the Kling AI dashboard.</p>
+              </>}
               {showVertexSettings && <>
                 <div className="grid gap-2"><Label htmlFor="ai-service-account">Google service-account JSON</Label><textarea id="ai-service-account" value={serviceAccountJson} onChange={(e) => setServiceAccountJson(e.target.value)} placeholder={editingId ? 'leave blank to keep existing credentials' : '{"client_email":"...","private_key":"..."}'} className="min-h-28 rounded-md border bg-transparent px-3 py-2 font-mono text-xs" required={!editingId} /></div>
                 <div className="grid gap-2"><Label htmlFor="ai-project">Google Cloud project ID</Label><Input id="ai-project" value={projectId} onChange={(e) => setProjectId(e.target.value)} placeholder="my-gcp-project" required /></div>

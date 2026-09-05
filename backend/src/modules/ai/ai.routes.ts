@@ -34,6 +34,8 @@ function toResponse(row: typeof aiConfigs.$inferSelect) {
     userId: row.userId,
     provider: row.provider,
     apiKeyMasked: maskKey(row.apiKey),
+    accessKeyMasked: maskKey((row as any).accessKey),
+    secretKeyMasked: maskKey((row as any).secretKey),
     serviceAccountConfigured: Boolean(row.serviceAccountJson),
     baseUrl: row.baseUrl,
     projectId: row.projectId,
@@ -112,6 +114,10 @@ const CURATED_BY_TASK: Record<string, Partial<Record<ModelTask, string[]>>> = {
   luma: {
     image: ["photon-1", "photon-flash-1"],
     video: ["ray-2", "ray-flash-2"],
+  },
+  kling: {
+    image: ["kling-image-1.0", "kling-v1", "kling-v2"],
+    video: ["kling-video-1.5", "kling-video-1.6", "kling-video-1.0"],
   },
 };
 
@@ -208,6 +214,28 @@ async function fetchOllamaModels(baseUrl: string): Promise<{ id: string; name: s
     const json: any = await res.json();
     const list = json.models ?? [];
     return list.map((m: any) => ({ id: m.name ?? m.model, name: m.name ?? m.model })).filter((m: any) => m.id);
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+// ponytail: Kling uses HMAC-SHA256 over the request body. share the same signing
+// with the media adapter via exported helpers in media.providers.ts.
+async function fetchKlingModels(baseUrl: string, accessKey: string, secretKey: string): Promise<{ id: string; name: string }[]> {
+  const { klingAuthHeaders } = await import("../media/media.providers");
+  const path = "/v1/models";
+  const url = `${baseUrl.replace(/\/+$/, "")}${path}`;
+  const headers = klingAuthHeaders({ baseUrl, accessKey, secretKey }, "GET", path, "");
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    const res = await fetch(url, { headers, signal: ctrl.signal });
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    const json: any = await res.json();
+    const list = json.data ?? json.models ?? [];
+    return list
+      .map((m: any) => ({ id: m.id ?? m.name, name: m.name ?? m.id ?? m.id }))
+      .filter((m: any) => m.id);
   } finally {
     clearTimeout(t);
   }
@@ -355,6 +383,8 @@ export async function aiRoutes(app: FastifyInstance) {
 
       // for dynamic providers, try to fetch if we have creds — strict DB-only
       let apiKey: string | null = null;
+      let accessKey: string | null = null;
+      let secretKey: string | null = null;
       let baseUrl: string | null = null;
       if (configId) {
         const [cfg] = await db
@@ -363,6 +393,8 @@ export async function aiRoutes(app: FastifyInstance) {
           .where(and(eq(aiConfigs.id, configId), eq(aiConfigs.userId, request.session!.user.id)));
         if (cfg) {
           apiKey = cfg.apiKey;
+          accessKey = (cfg as any).accessKey;
+          secretKey = (cfg as any).secretKey;
           baseUrl = cfg.baseUrl;
           hasConfig = true;
         }
@@ -373,6 +405,8 @@ export async function aiRoutes(app: FastifyInstance) {
           .where(and(eq(aiConfigs.userId, request.session!.user.id), eq(aiConfigs.provider, provider), eq(aiConfigs.isDefault, "1")));
         if (def) {
           apiKey = def.apiKey;
+          accessKey = (def as any).accessKey;
+          secretKey = (def as any).secretKey;
           baseUrl = def.baseUrl;
           hasConfig = true;
         } else {
@@ -380,6 +414,8 @@ export async function aiRoutes(app: FastifyInstance) {
           const [any] = await db.select().from(aiConfigs).where(and(eq(aiConfigs.userId, request.session!.user.id), eq(aiConfigs.provider, provider)));
           if (any) {
             apiKey = any.apiKey;
+            accessKey = (any as any).accessKey;
+            secretKey = (any as any).secretKey;
             baseUrl = any.baseUrl;
             hasConfig = true;
           }
@@ -387,7 +423,7 @@ export async function aiRoutes(app: FastifyInstance) {
       }
       if (!hasConfig) {
         // ponytail: live preview with just-typed key before POST /ai/configs
-        if (qApiKey || (provider === "ollama" && qBaseUrl)) {
+        if (qApiKey || (provider === "ollama" && qBaseUrl) || provider === "kling") {
           apiKey = (qApiKey as string) || null;
           baseUrl = (qBaseUrl as string) || null;
         } else if (curatedModels(provider, task).length) {
@@ -409,6 +445,14 @@ export async function aiRoutes(app: FastifyInstance) {
         let list: { id: string; name: string }[] = [];
         if (provider === "ollama") {
           list = await fetchOllamaModels(baseUrl || "http://localhost:11434");
+        } else if (provider === "kling") {
+          // ponytail: Kling needs both Ak + Sk — model list is not gated by Ak presence; curated is shown if no auth yet
+          if (!accessKey || !secretKey) {
+            const curated = curatedModels("kling", task);
+            if (curated.length) return curated;
+            return [];
+          }
+          list = await fetchKlingModels(baseUrl || "https://api.klingai.com", accessKey, secretKey);
         } else if (provider === "openai" || provider === "openrouter" || provider === "custom" || provider === "xai" || provider === "runway" || provider === "vertex" || provider === "fal" || provider === "luma") {
           if (!apiKey) {
             // ponytail: no key — show curated if available so dropdown not empty
