@@ -109,14 +109,12 @@ export default function OverlayEditorPanel({
   }
 
   return (
-    <div className="grid content-start gap-3">
-      {/* 1 · Text layers — pick which text block to edit */}
-      <div className="grid gap-1.5">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+    <div className="grid content-start gap-2">
+      {/* 1 · Text layers — pick which text block to edit.
+          Tip lives as a tooltip so the list fits above the fold. */}
+      <div className="grid gap-1" title="Pick a layer to edit it. You can also tap the text directly in the preview.">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           1 · Text layers ({blocks.length})
-        </p>
-        <p className="text-[11px] leading-snug text-muted-foreground">
-          Pick a layer to edit it. Tip: you can also tap the text directly in the preview.
         </p>
         {blocks.length === 0 ? (
           <p className="text-xs text-muted-foreground">This visual has no text layers.</p>
@@ -138,14 +136,12 @@ export default function OverlayEditorPanel({
         )}
       </div>
 
-      {/* 2 · Layer type — single-select style preset for the selected layer */}
+      {/* 2 · Layer type — single-select style preset for the selected layer.
+          Explainer kept as a tooltip to save vertical space. */}
       {selected ? (
-        <div className="grid gap-1.5">
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        <div className="grid gap-1" title="Pick one style for this layer — position, size and colours apply at once. The text stays yours to edit below.">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             2 · Layer type
-          </p>
-          <p className="text-[11px] leading-snug text-muted-foreground">
-            Pick one style for this layer — position, size and colours apply at once. The text stays yours to edit below.
           </p>
           <div className="flex flex-wrap gap-1.5" role="group" aria-label="Layer type">
             {LAYER_TYPE_PRESETS.map((preset) => (
@@ -178,9 +174,9 @@ export default function OverlayEditorPanel({
 
       {/* 3 · Selected-layer controls: text, size, position, style */}
       {selected ? (
-        <div className="grid gap-2 rounded-lg border p-2.5">
+        <div className="grid gap-1.5 rounded-lg border p-2">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               3 · Editing layer {selectedIndex + 1}
             </span>
             <span className="text-[11px] tabular-nums text-muted-foreground">
@@ -193,21 +189,21 @@ export default function OverlayEditorPanel({
           <label className="grid gap-1">
             <span className="text-xs font-medium text-foreground">Text</span>
             <textarea
-              rows={2}
+              rows={1}
               value={selected.text}
               onChange={(e) => onPatch(selected.id, { text: e.target.value })}
-              className="w-full resize-none rounded border bg-card px-2 py-1 text-sm"
+              className="max-h-16 w-full resize-none rounded border bg-card px-2 py-1 text-sm"
               placeholder="Your text…"
               aria-label="Edit overlay text"
             />
           </label>
           <div className="grid gap-1.5">
             <div className="flex items-center gap-1 text-xs text-muted-foreground" title="Font size is fixed at 14px">
-              <span className="w-16 shrink-0 font-medium text-foreground">Size 14px</span>
+              <span className="w-14 shrink-0 text-[11px] font-medium text-foreground">Size 14px</span>
               <span className="flex-1 text-[11px]">Fixed — long text shrinks automatically to fit.</span>
             </div>
             <label className="flex items-center gap-1 text-xs text-muted-foreground">
-              <span className="w-16 shrink-0 font-medium text-foreground">Across {Math.round(selected.x)}%</span>
+              <span className="w-14 shrink-0 text-[11px] font-medium text-foreground">Across {Math.round(selected.x)}%</span>
               <input
                 type="range"
                 min={0}
@@ -221,7 +217,7 @@ export default function OverlayEditorPanel({
               />
             </label>
             <label className="flex items-center gap-1 text-xs text-muted-foreground">
-              <span className="w-16 shrink-0 font-medium text-foreground">Up/down {Math.round(selected.y)}%</span>
+              <span className="w-14 shrink-0 text-[11px] font-medium text-foreground">Up/down {Math.round(selected.y)}%</span>
               <input
                 type="range"
                 min={0}
@@ -348,24 +344,23 @@ export default function OverlayEditorPanel({
         </p>
       )}
 
-      {/* 4 · Background media — replace the photo/video behind the text */}
-      <div className="grid gap-1.5 rounded-lg border p-2.5">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+      {/* 4 · Background media — replace the photo/video behind the text.
+          Explainer kept as a tooltip; thumbnail + actions share one row. */}
+      <div className="grid gap-1.5 rounded-lg border p-2" title={`Swap the ${mediaNoun} behind your text. Your layers stay exactly where they are.`}>
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           4 · Background {mediaNoun}
         </p>
-        <p className="text-[11px] leading-snug text-muted-foreground">
-          Swap the {mediaNoun} behind your text. Your layers stay exactly where they are.
-        </p>
-        {imageSrc ? (
-          isVideo ? (
-            <video src={imageSrc} muted loop playsInline preload="metadata" className="max-h-28 w-full rounded-md border object-cover" aria-label="Replacement video preview" />
+        <div className="flex items-center gap-2">
+          {imageSrc ? (
+            isVideo ? (
+              <video src={imageSrc} muted loop playsInline preload="metadata" className="h-14 w-20 shrink-0 rounded-md border object-cover" aria-label="Replacement video preview" />
+            ) : (
+              <img src={imageSrc} alt="Replacement image preview" className="h-14 w-20 shrink-0 rounded-md border object-cover" />
+            )
           ) : (
-            <img src={imageSrc} alt="Replacement image preview" className="max-h-28 w-full rounded-md border object-cover" />
-          )
-        ) : (
-          <p className="text-xs text-muted-foreground">No visual yet.</p>
-        )}
-        <div className="flex flex-wrap gap-1.5">
+            <p className="text-xs text-muted-foreground">No visual yet.</p>
+          )}
+          <div className="flex flex-wrap gap-1.5">
           <input
             ref={fileRef}
             type="file"
@@ -387,44 +382,42 @@ export default function OverlayEditorPanel({
               <RotateCcw className="size-3" /> Revert
             </Button>
           )}
+          </div>
         </div>
         {mismatch ? (
           <p role="alert" className="text-[11px] font-medium leading-snug text-destructive">{mismatch}</p>
-        ) : (
-          <p className="text-[11px] leading-snug text-muted-foreground">
-            {isCustomImage
-              ? `Using your uploaded ${mediaNoun} — applies to the post only when you press Done.`
-              : `Upload replaces the background ${mediaNoun} for this edit without affecting the feed.`}
+        ) : isCustomImage ? (
+          <p className="text-[11px] leading-snug text-muted-foreground" title="Upload replaces the background for this edit without affecting the feed until Done.">
+            Using your upload — applies on Done.
           </p>
-        )}
+        ) : null}
       </div>
 
-      {/* Composition summary */}
-      <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 rounded-lg border bg-muted/30 p-2.5 text-xs">
-        <div className="grid gap-0.5">
+      {/* Composition summary — single inline row */}
+      <dl className="flex items-center gap-3 rounded-lg border bg-muted/30 px-2 py-1.5 text-xs">
+        <div className="flex items-center gap-1">
           <dt className="text-muted-foreground">Format</dt>
           <dd className="font-medium">{formatLabel}</dd>
         </div>
-        <div className="grid gap-0.5">
+        <span aria-hidden className="text-muted-foreground">·</span>
+        <div className="flex items-center gap-1">
           <dt className="text-muted-foreground">Highlight</dt>
           <dd className="font-medium">{selected ? (selected.backgroundEnabled ? 'On' : 'Off') : '—'}</dd>
         </div>
       </dl>
 
-      {/* Meme GIF layer (Layer 3) — position of the meme_url overlay */}
+      {/* Meme GIF layer (Layer 3) — position of the meme_url overlay.
+          Explainer kept as a tooltip to save vertical space. */}
       {gifLayer && onPatchGif && (
-        <div className="grid gap-1.5 rounded-lg border p-2.5">
+        <div className="grid gap-1.5 rounded-lg border p-2" title="Position of the meme image above the background. Tap it in the preview — or drag it — to move it.">
           <div className="flex items-center justify-between gap-2">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               GIF overlay
             </p>
             <span className="text-[11px] tabular-nums text-muted-foreground">
               X {Math.round(gifLayer.x)}% · Y {Math.round(gifLayer.y)}%
             </span>
           </div>
-          <p className="text-[11px] leading-snug text-muted-foreground">
-            Position of the meme image above the background. Tap it in the preview — or drag it — to move it.
-          </p>
           <Button
             type="button"
             variant={gifSelected ? 'secondary' : 'outline'}
@@ -435,7 +428,7 @@ export default function OverlayEditorPanel({
             {gifSelected ? 'GIF selected' : 'Select GIF layer'}
           </Button>
           <label className="flex items-center gap-1 text-xs text-muted-foreground">
-            <span className="w-16 shrink-0 font-medium text-foreground">Across {Math.round(gifLayer.x)}%</span>
+            <span className="w-14 shrink-0 text-[11px] font-medium text-foreground">Across {Math.round(gifLayer.x)}%</span>
             <input
               type="range"
               min={0}
@@ -449,7 +442,7 @@ export default function OverlayEditorPanel({
             />
           </label>
           <label className="flex items-center gap-1 text-xs text-muted-foreground">
-            <span className="w-16 shrink-0 font-medium text-foreground">Up/down {Math.round(gifLayer.y)}%</span>
+            <span className="w-14 shrink-0 text-[11px] font-medium text-foreground">Up/down {Math.round(gifLayer.y)}%</span>
             <input
               type="range"
               min={0}

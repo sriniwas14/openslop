@@ -173,17 +173,20 @@ export default function OverlayEditorDialog({
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && closeWithoutApply()}>
-      <DialogContent className="sm:max-w-4xl">
-        <DialogHeader>
-          <DialogTitle>Edit visual layout</DialogTitle>
-          <DialogDescription>
-            {content.title ?? 'Content'} · {formatLabel(content.contentFormat)} — changes apply to the post only when you press Done.
+      <DialogContent className="max-h-[90vh] flex flex-col gap-0 overflow-hidden p-0 sm:max-w-5xl">
+        <DialogHeader className="shrink-0 border-b px-4 pt-3 pb-2">
+          <DialogTitle className="text-sm">Edit visual layout</DialogTitle>
+          <DialogDescription className="truncate text-xs" title={`${content.title ?? 'Content'} · ${formatLabel(content.contentFormat)}`}>
+            {content.title ?? 'Content'} · {formatLabel(content.contentFormat)} — applies on Done.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid max-h-[70vh] gap-4 overflow-auto pr-1 md:grid-cols-[minmax(0,1fr)_260px]">
-          {/* Live visual layout preview — same renderer as the feed card */}
-          <div ref={previewRef} style={{ aspectRatio: String(mediaAspect ?? 9 / 16) }} className="relative w-full overflow-hidden rounded-lg bg-black">
+        <div className="grid h-[min(72vh,640px)] min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] md:grid-cols-[minmax(0,1fr)_320px] md:grid-rows-1">
+          {/* Live visual layout preview — same renderer as the feed card.
+              Sticky: never scrolls, vertically centred, capped so the whole
+              dialog fits a laptop viewport without outer scroll. */}
+          <div className="flex max-h-[30vh] min-h-0 items-center justify-center overflow-hidden bg-black/95 p-3 md:max-h-none md:h-full">
+            <div ref={previewRef} style={{ aspectRatio: String(mediaAspect ?? 9 / 16) }} className="relative h-full max-h-full w-auto max-w-full shrink-0 overflow-hidden rounded-lg bg-black">
             {showVideo ? (
               <video
                 src={effectiveSrc!}
@@ -230,8 +233,10 @@ export default function OverlayEditorDialog({
               />
             )}
           </div>
+          </div>
 
-          {/* Sidebar */}
+          {/* Sidebar — the only scrollable column */}
+          <div className="min-h-0 overflow-y-auto border-t px-3 py-3 md:h-full md:border-t-0 md:border-l">
           <OverlayEditorPanel
             blocks={draftBlocks}
             selectedId={draftSelectedId}
@@ -257,13 +262,14 @@ export default function OverlayEditorDialog({
               setDraftSelectedId(null)
             }}
           />
+          </div>
         </div>
 
-        <DialogFooter className="sm:justify-between">
-          <Button variant="ghost" onClick={closeWithoutApply}>
+        <DialogFooter className="mx-0 mb-0 shrink-0 border-t px-4 py-2 sm:justify-between">
+          <Button variant="ghost" size="sm" onClick={closeWithoutApply}>
             Cancel
           </Button>
-          <Button onClick={apply}>Done</Button>
+          <Button size="sm" onClick={apply}>Done</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
