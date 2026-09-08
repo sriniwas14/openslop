@@ -1,11 +1,19 @@
-import { describe, expect, it, beforeAll, afterAll } from "bun:test";
+import { describe, expect, it, beforeAll } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// isolated DB before any module that imports lib/db loads
+// isolated DB before any module that imports lib/db loads. `bun test` runs every file in one
+// process, so lib/db is opened once with the FIRST file's path: agree on that path (??=) and
+// only clean up on process exit — deleting it in afterAll pulls the file out from under the
+// still-open connection and every later DB test fails with SQLITE_IOERR.
 const tmpDir = mkdtempSync(join(tmpdir(), "openslop-test-"));
-process.env.OPENSLOP_DB_PATH = join(tmpDir, "test.sqlite");
+process.env.OPENSLOP_DB_PATH ??= join(tmpDir, "test.sqlite");
+process.on("exit", () => {
+  try {
+    rmSync(tmpDir, { recursive: true, force: true });
+  } catch {}
+});
 
 const [{ db }, schema] = await Promise.all([
   import("../../lib/db"),
@@ -45,10 +53,6 @@ describe("scrapeAndStorePosts", () => {
         await db.run(sql);
       } catch {}
     }
-  });
-
-  afterAll(() => {
-    rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it("requires a stored Apify key", async () => {

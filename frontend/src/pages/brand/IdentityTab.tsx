@@ -1,0 +1,70 @@
+import { Compass, Package, Tag } from 'lucide-react'
+import type { FieldConfig } from '@/components/brand/shared'
+import SimpleSection from '@/components/brand/SimpleSection'
+import { useBrandTab } from './BrandTabContext'
+
+const BRAND_FIELDS: FieldConfig[] = [
+  { key: 'name', label: 'Name', type: 'text', maxLength: 255 },
+  { key: 'website', label: 'Website', type: 'url', maxLength: 2048, placeholder: 'https://example.com' },
+  { key: 'tagline', label: 'Tagline', type: 'text', maxLength: 500 },
+  { key: 'description', label: 'Description', type: 'textarea', rows: 3, maxLength: 4000 },
+  { key: 'industry', label: 'Industry', type: 'text', maxLength: 255 },
+  { key: 'category', label: 'Category', type: 'text', maxLength: 255 },
+]
+
+const IDENTITY_FIELDS: FieldConfig[] = [
+  { key: 'coreIdentity', label: 'Core identity', type: 'textarea', rows: 3, maxLength: 4000 },
+  { key: 'productOffering', label: 'Product / offering', type: 'textarea', rows: 3, maxLength: 4000 },
+  { key: 'productFeatures', label: 'Product features', type: 'list' },
+  { key: 'productBenefits', label: 'Product benefits', type: 'list' },
+  { key: 'useCases', label: 'Use cases', type: 'list' },
+  { key: 'uniqueBenefits', label: 'Unique benefits', type: 'list' },
+  { key: 'problemSolution', label: 'Problem → solution', type: 'textarea', rows: 3, maxLength: 4000 },
+]
+
+const POSITIONING_FIELDS: FieldConfig[] = [
+  { key: 'mission', label: 'Mission', type: 'textarea', rows: 2, maxLength: 4000 },
+  { key: 'vision', label: 'Vision', type: 'textarea', rows: 2, maxLength: 4000 },
+  { key: 'valueProposition', label: 'Value proposition', type: 'textarea', rows: 2, maxLength: 4000 },
+  { key: 'marketPositioning', label: 'Market positioning', type: 'textarea', rows: 2, maxLength: 4000 },
+  { key: 'differentiation', label: 'Differentiation', type: 'textarea', rows: 2, maxLength: 4000 },
+  { key: 'ownedSpace', label: 'Owned space', type: 'textarea', rows: 2, maxLength: 4000 },
+]
+
+export default function IdentityTab() {
+  const { companyId, doc, onSaved } = useBrandTab()
+  return (
+    <div className="grid gap-4">
+      <SimpleSection
+        companyId={companyId}
+        doc={doc}
+        section="brand"
+        title="Brand"
+        description="The essentials — name, site, category and one-line story."
+        icon={Tag}
+        fields={BRAND_FIELDS}
+        onSaved={onSaved}
+      />
+      <SimpleSection
+        companyId={companyId}
+        doc={doc}
+        section="identityAndProduct"
+        title="Identity & product"
+        description="What the brand is, what it sells and the problem it solves."
+        icon={Package}
+        fields={IDENTITY_FIELDS}
+        onSaved={onSaved}
+      />
+      <SimpleSection
+        companyId={companyId}
+        doc={doc}
+        section="purposeAndPositioning"
+        title="Purpose & positioning"
+        description="Mission, vision and the space the brand owns in the market."
+        icon={Compass}
+        fields={POSITIONING_FIELDS}
+        onSaved={onSaved}
+      />
+    </div>
+  )
+}

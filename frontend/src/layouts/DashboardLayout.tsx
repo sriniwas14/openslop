@@ -4,6 +4,7 @@ import { useSession } from '@/services/auth'
 import { listCompanies } from '@/services/companies'
 import { listAiConfigs } from '@/services/ai'
 import { CompanyProvider } from '@/context/CompanyContext'
+import { BrandAnalysisProvider } from '@/context/BrandAnalysisContext'
 import Sidebar from '@/components/layout/Sidebar'
 import Topbar from '@/components/layout/Topbar'
 
@@ -33,15 +34,17 @@ export default function DashboardLayout() {
 
   return (
     <CompanyProvider fetcher={listCompanies}>
-      <div className="flex h-svh">
-        <Sidebar mobileOpen={mobileOpen} onMobileClose={() => setMobileOpen(false)} />
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-          <Topbar onMenuClick={() => setMobileOpen((v) => !v)} />
-          <main className="min-h-0 flex-1 overflow-auto bg-background p-4 md:p-6">
-            <Outlet />
-          </main>
+      <BrandAnalysisProvider>
+        <div className="flex h-svh">
+          <Sidebar mobileOpen={mobileOpen} onMobileClose={() => setMobileOpen(false)} />
+          <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <Topbar onMenuClick={() => setMobileOpen((v) => !v)} />
+            <main className="min-h-0 flex-1 overflow-auto bg-background p-4 md:p-6">
+              <Outlet />
+            </main>
+          </div>
         </div>
-      </div>
+      </BrandAnalysisProvider>
     </CompanyProvider>
   )
 }
