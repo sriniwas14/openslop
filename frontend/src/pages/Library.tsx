@@ -6,6 +6,7 @@ import { useCompany } from '@/context/CompanyContext'
 import { cn } from '@/lib/utils'
 import { platformMeta, typeLabel } from '@/components/feed/data'
 import MediaTextOverlay from '@/components/feed/MediaTextOverlay'
+import MemeGifOverlay, { DEFAULT_MEME_GIF_LAYER } from '@/components/feed/MemeGifOverlay'
 import { StatusBadge } from '@/components/content/primitives'
 import LibraryDetailDialog from '@/components/library/LibraryDetailDialog'
 import {
@@ -216,13 +217,13 @@ export default function Library() {
           const base = slugFilename(post.title ?? post.hook ?? 'post', post.mediaType).replace(/\.(mp4|jpg)$/i, '')
           if (post.mediaType === 'video') {
             await exportVideoWithOverlay(
-              { url: post.visualUrl, mediaType: 'video', blocks: post.blocks },
+              { url: post.visualUrl, mediaType: 'video', blocks: post.blocks, memeUrl: post.memeUrl, gifLayer: post.gifLayer },
               `${base}.webm`,
               () => toast({ title: 'Saved as still image', description: 'Video recording is unsupported here — exported one frame with text.', variant: 'info' }),
             )
           } else {
             await exportImageWithOverlay(
-              { url: post.visualUrl, mediaType: 'image', blocks: post.blocks },
+              { url: post.visualUrl, mediaType: 'image', blocks: post.blocks, memeUrl: post.memeUrl, gifLayer: post.gifLayer },
               `${base}.png`,
             )
           }
@@ -518,6 +519,14 @@ function SavedMedia({ post }: { post: SavedPost }) {
             allowInlineEdit={false}
             onSelect={() => {}}
             onPatch={() => {}}
+          />
+        )}
+        {/* Layer 3: saved meme GIF overlay — same position as the feed. */}
+        {post.contentFormat === 'meme' && post.visualUrl && post.memeUrl && (
+          <MemeGifOverlay
+            src={post.memeUrl}
+            alt={post.hook ?? 'Meme overlay'}
+            layer={post.gifLayer ?? DEFAULT_MEME_GIF_LAYER}
           />
         )}
       </div>

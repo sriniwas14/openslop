@@ -5,6 +5,15 @@ import { companies, contentGenerationJobs, generatedContents } from "../../db/sc
 import type { ContentAngle } from "../brand/brand.schemas";
 import { buildBrandContextPrompt, extractJson, getBrandContext, type BrandContext } from "../brand/brand.service";
 import { PROMPT_VERSION, UGC_CREATOR_SYSTEM_PROMPT, buildUgcBatchPrompt, type ContentSlot } from "./ugc.prompts";
+import { MEME_LIBRARY, MEME_VARIATIONS_PER_MEME, type MemeEntry } from "./meme.library";
+import { buildMemeBackgroundQueries } from "../visual/visual.queries";
+import {
+  MEME_CREATOR_SYSTEM_PROMPT,
+  MEME_PROMPT_VERSION,
+  buildMemeBatchPrompt,
+  parseMemeVariations,
+  type MemeVariation,
+} from "./meme.prompts";
 import {
   FORMAT_REQUIRED_FIELDS,
   UGC_CONTENT_FORMATS,
@@ -590,6 +599,324 @@ export const aiBatchGenerator: UgcBatchGenerator = async ({ userId, brandBlock, 
 };
 
 // ---------------------------------------------------------------------------
+// Meme Engine generation — Brand Intelligence + predefined memes → 5 overlay
+// variations per meme (≈20 memes × 5 = ~100 rows). Reuses the same job row,
+// worker, and in-flight guard as the generic path above; the generic
+// generateInitialBrandContent is kept untouched for its unit tests.
+// Wipe-and-regenerate: a (re)run replaces the brand's meme set wholesale.
+// ---------------------------------------------------------------------------
+
+/** Synthetic angle link for meme rows (generated_content.content_angle_id is NOT NULL). */
+export function memeContentAngleId(memeId: string): string {
+  return `meme:${memeId}`;
+}
+
+// ponytail: meme overlays are ~10 tokens, so shared brand words alone clear the generic
+// 0.75 Jaccard gate and distinct jokes get rejected. 0.9 still catches exact and
+// near-exact duplicates (contentHash catches the exact ones first).
+const MEME_DUPLICATE_SIMILARITY = 0.9;
+
+export type MemeBatchGenerator = (input: {
+  userId: string;
+  brandBlock: string;
+  meme: MemeEntry;
+  recentOverlays: string[];
+  attemptNote: string | null;
+}) => Promise<{ variations: unknown[]; model: string | null }>;
+
+export const aiMemeBatchGenerator: MemeBatchGenerator = async ({ userId, brandBlock, meme, recentOverlays, attemptNote }) => {
+  // ponytail: dynamic import — same reason as aiBatchGenerator above.
+  const { resolveUserModel } = await import("../company/company.workflow");
+  const model = await resolveUserModel(userId, "text");
+  const agent = new (await import("@mastra/core/agent")).Agent({
+    id: "meme-content-agent",
+    name: "meme-content-agent",
+    instructions: MEME_CREATOR_SYSTEM_PROMPT,
+    model: model as any,
+  });
+  const res = await agent.generate(buildMemeBatchPrompt({ brandBlock, meme, recentOverlays, attemptNote }));
+  if (!res?.text) throw new UgcError("AI returned an empty response", 502);
+  const parsed = extractJson(res.text);
+  const variations = Array.isArray(parsed?.variations) ? parsed.variations : Array.isArray(parsed) ? parsed : [];
+  return { variations, model: String((model as any)?.modelId ?? (model as any)?.model ?? "unknown") };
+};
+
+export type MemeValidationContext = {
+  brandText: string;
+  allowedPhrases: string[];
+  memory: DedupeMemory;
+};
+
+export function validateMemeVariation(
+  variation: MemeVariation,
+  meme: MemeEntry,
+  variationIndex: number,
+  ctx: MemeValidationContext,
+): { ok: true; hash: string; tokens: string[] } | { ok: false; reason: string } {
+  const text = [variation.overlay_text, variation.description ?? "", ...(variation.tags ?? [])].join("\n");
+  const fabrication = scanForFabrication(text, ctx.brandText, ctx.allowedPhrases);
+  if (fabrication) return { ok: false, reason: `variation ${variationIndex + 1}: ${fabrication}` };
+  // meme → overlay relationship is the point: the overlay must not be empty boilerplate
+  if (variation.overlay_text.trim().length < 4)
+    return { ok: false, reason: `variation ${variationIndex + 1}: overlay text is too short` };
+
+  const hash = contentHash(`meme:${meme.id}`, variation.overlay_text);
+  if (ctx.memory.hashes.has(hash))
+    return { ok: false, reason: `variation ${variationIndex + 1}: duplicate of an overlay already saved for this brand` };
+  const tokens = tokenize(`${variation.overlay_text} ${variation.description ?? ""}`);
+  const overlayTokens = tokenize(variation.overlay_text);
+  for (const existing of ctx.memory.tokens) {
+    if (similarity(tokens, existing) >= MEME_DUPLICATE_SIMILARITY) {
+      return { ok: false, reason: `variation ${variationIndex + 1}: too similar to an overlay already generated for this brand` };
+    }
+  }
+  for (const existingHook of ctx.memory.hooks) {
+    if (similarity(overlayTokens, tokenize(existingHook)) >= MEME_DUPLICATE_SIMILARITY) {
+      return { ok: false, reason: `variation ${variationIndex + 1}: overlay is too similar to one already generated` };
+    }
+  }
+  return { ok: true, hash, tokens };
+}
+
+// ponytail: meme base visuals are scenic Pexels photos (no people) — the reaction
+// lives in the meme_url GIF overlay. The same pure helpers drive query generation
+// (visual.queries) and the backfill script, so stored tags/category always match
+// what search will run.
+export function memeScenicCategory(query: string): string {
+  if (/texture|wall/.test(query)) return "abstract_texture";
+  if (/interior/.test(query)) return "home";
+  if (/desk/.test(query)) return "workspace";
+  if (/city|architecture|building/.test(query)) return "street";
+  return "outdoor";
+}
+
+export async function insertMemeContent(input: {
+  userId: string;
+  companyId: string;
+  jobId: string;
+  meme: MemeEntry;
+  variation: MemeVariation;
+  hash: string;
+  model: string | null;
+}): Promise<boolean> {
+  const now = new Date().toISOString();
+  const { meme, variation } = input;
+  const overlay = variation.overlay_text.trim();
+  const jokeTags = dedupe(
+    [...(variation.tags ?? []), ...meme.meme_metadata].map((t) => t.toLowerCase().trim()).filter((t) => t.length > 1 && !GENERIC_VISUAL_TAGS.has(t)),
+  ).slice(0, 12);
+  if (jokeTags.length < 2) return false;
+  // scenic search metadata — derived from the same pool the visual feed queries,
+  // seeded by the joke tags so a meme set rotates across landscapes/buildings.
+  const scenicQueries = buildMemeBackgroundQueries({ visualTags: jokeTags, visualMood: variation.emotion, contentFormat: "meme" }, 2);
+  const scenicTags = dedupe(scenicQueries.map((q) => q.split(/\s+/).slice(0, 2).join(" ")));
+  try {
+    const rows = await db
+      .insert(generatedContents)
+      .values({
+        userId: input.userId,
+        companyId: input.companyId,
+        jobId: input.jobId,
+        contentAngleId: memeContentAngleId(meme.id),
+        // ponytail: alternate the two meme-capable feeds so the library reads natively in both
+        platform: variation.variation_id % 2 === 0 ? "tiktok" : "instagram",
+        contentFormat: "meme",
+        contentType: normalizeContentType(variation.creative_angle) ?? "relatable_situation",
+        generationMode: "meme",
+        language: "en",
+        hook: overlay.slice(0, 400),
+        title: overlay.slice(0, 255),
+        body: (variation.description ?? "").slice(0, 8000) || null,
+        lines: null,
+        script: null,
+        onScreenText: JSON.stringify([overlay]),
+        cta: null,
+        visualTags: JSON.stringify(scenicTags),
+        visualMood: variation.emotion,
+        visualStyle: "lifestyle",
+        visualCategory: memeScenicCategory(scenicQueries[0] ?? ""),
+        visualOrientation: "portrait",
+        status: "generated",
+        source: "ai",
+        model: input.model,
+        promptVersion: MEME_PROMPT_VERSION,
+        contentHash: input.hash,
+        memeId: meme.id,
+        memeName: meme.meme,
+        memeUrl: meme.meme_url,
+        memeDescription: meme.meme_description,
+        creativeAngle: variation.creative_angle,
+        emotion: variation.emotion,
+        brandAngle: variation.brand_angle,
+        visualIntentId: null,
+        visualAssetId: null,
+        usageCount: "0",
+        isEdited: "0",
+        editedAt: null,
+        createdAt: now,
+        updatedAt: now,
+      } as any)
+      .onConflictDoNothing()
+      .returning();
+    return rows.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+export type GenerateMemeOptions = {
+  companyId: string;
+  userId: string;
+  generateFn?: MemeBatchGenerator;
+  concurrency?: number;
+};
+
+/**
+ * Generate (and persist) exactly MEME_VARIATIONS_PER_MEME overlay variations per
+ * predefined meme. Wipe-and-regenerate: existing rows for the brand are replaced
+ * wholesale so a re-analysis never leaves a mixed generic/meme library.
+ */
+export async function generateMemeBrandContent(opts: GenerateMemeOptions): Promise<GenerationJobResult> {
+  const { companyId, userId } = opts;
+  const generateFn = opts.generateFn ?? aiMemeBatchGenerator;
+  const concurrency = Math.max(1, opts.concurrency ?? CONCURRENCY);
+  const targetCount = MEME_LIBRARY.length * MEME_VARIATIONS_PER_MEME;
+
+  const [company] = await db.select().from(companies).where(and(eq(companies.id, companyId), eq(companies.userId, userId)));
+  if (!company) throw new UgcError("Company not found", 404);
+
+  const ctx = await getBrandContext(companyId, userId);
+  if (!ctx) throw new UgcError("Brand Intelligence is not ready for this brand yet", 409);
+  if (!ctx.contentAngles.length) throw new UgcError("No active content angles for this brand yet", 409);
+
+  if (inFlight.has(companyId)) {
+    const running = await findJob(companyId);
+    const saved = await countGeneratedContent(companyId);
+    return summarizeJob(
+      { id: running?.id ?? null, status: running?.status ?? "processing", targetCount, generatedCount: saved, error: null },
+      saved,
+      { alreadyRunning: true },
+    );
+  }
+  const existingJob = await findJob(companyId);
+  if (existingJob && existingJob.status === "processing" && !isStaleJob(existingJob.status, existingJob.updatedAt)) {
+    const saved = await countGeneratedContent(companyId);
+    return summarizeJob(
+      { id: existingJob.id, status: existingJob.status, targetCount, generatedCount: saved, error: null },
+      saved,
+      { alreadyRunning: true },
+    );
+  }
+
+  const job = await ensureJob({ userId, companyId, targetCount });
+  const jobId = job.id;
+  inFlight.add(companyId);
+
+  try {
+    await touchJob(jobId, { status: "processing", startedAt: new Date().toISOString(), generatedCount: "0", promptVersion: MEME_PROMPT_VERSION });
+    // wipe-and-regenerate: drop the previous set (generic or meme) before writing the new one
+    await db.delete(generatedContents).where(eq(generatedContents.companyId, companyId));
+
+    const brandBlock = buildBrandContextPrompt(ctx);
+    const allowedPhrases = [...(ctx.tone.wordsToUse ?? []), ...(ctx.tone.personality ?? [])];
+    const brandText = brandBlock;
+    const memory: DedupeMemory = { hashes: new Set(), tokens: [], hooks: [] };
+    const overlays: string[] = [];
+    let model: string | null = null;
+
+    let pending: { meme: MemeEntry; note: string | null }[] = MEME_LIBRARY.map((meme) => ({ meme, note: null }));
+    let round = 0;
+
+    while (pending.length && round < MAX_ROUNDS) {
+      round++;
+      const next: typeof pending = [];
+
+      for (const group of chunk(pending, concurrency)) {
+        const settled = await Promise.allSettled(
+          group.map(async ({ meme, note }) => {
+            const { variations: raw, model: usedModel } = await generateFn({
+              userId,
+              brandBlock,
+              meme,
+              recentOverlays: overlays.slice(-RECENT_IN_PROMPT),
+              attemptNote: note,
+            });
+            if (usedModel) model = usedModel;
+            const parsed = parseMemeVariations(raw);
+            if (!parsed.ok) return { meme, ok: false as const, reason: parsed.reason, saved: [] as string[] };
+
+            const vctx: MemeValidationContext = { brandText, allowedPhrases, memory };
+            const ordered = [...parsed.variations].sort((a, b) => a.variation_id - b.variation_id);
+            // all-or-nothing per meme: a single bad variation fails the meme so the set
+            // stays at exactly 5 and the retry regenerates the whole meme
+            const checked: { variation: MemeVariation; hash: string; tokens: string[] }[] = [];
+            for (let i = 0; i < ordered.length; i++) {
+              const res = validateMemeVariation(ordered[i], meme, i, vctx);
+              if (!res.ok) return { meme, ok: false as const, reason: res.reason, saved: [] as string[] };
+              checked.push({ variation: ordered[i], hash: res.hash, tokens: res.tokens });
+            }
+            const saved: string[] = [];
+            for (const { variation, hash, tokens } of checked) {
+              const inserted = await insertMemeContent({ userId, companyId, jobId, meme, variation, hash, model });
+              if (!inserted) return { meme, ok: false as const, reason: "an identical overlay is already saved for this brand", saved };
+              memory.hashes.add(hash);
+              memory.tokens.push(tokens);
+              memory.hooks.push(variation.overlay_text);
+              overlays.push(variation.overlay_text.slice(0, 160));
+              saved.push(variation.overlay_text);
+            }
+            return { meme, ok: true as const, reason: null as string | null, saved };
+          }),
+        );
+        settled.forEach((res, i) => {
+          if (res.status === "fulfilled") {
+            if (!res.value.ok) next.push({ meme: res.value.meme, note: res.value.reason });
+          } else {
+            const reason = String((res.reason as any)?.message ?? "generation failed").slice(0, 200);
+            next.push({ meme: group[i].meme, note: `the previous attempt failed (${reason})` });
+          }
+        });
+      }
+
+      const total = await countGeneratedContent(companyId);
+      await touchJob(jobId, { status: "processing", generatedCount: String(total), model, error: null });
+      pending = total >= targetCount ? [] : next;
+    }
+
+    const savedCount = await countGeneratedContent(companyId);
+    if (savedCount >= targetCount) {
+      await touchJob(jobId, {
+        status: "completed",
+        generatedCount: String(savedCount),
+        completedAt: new Date().toISOString(),
+        model,
+        promptVersion: MEME_PROMPT_VERSION,
+        error: null,
+      });
+      return { jobId, status: "completed", targetCount, generatedCount: savedCount, savedThisRun: savedCount, error: null };
+    }
+    const message = `Generated ${savedCount} of ${targetCount} meme overlays — the AI provider returned too many unusable or duplicate variations. Retry to regenerate the missing memes.`;
+    await touchJob(jobId, {
+      status: "failed",
+      generatedCount: String(savedCount),
+      completedAt: new Date().toISOString(),
+      model,
+      promptVersion: MEME_PROMPT_VERSION,
+      error: message,
+    });
+    return { jobId, status: "failed", targetCount, generatedCount: savedCount, savedThisRun: savedCount, error: message };
+  } catch (e: any) {
+    const message = String(e?.message ?? e).slice(0, 2000);
+    const savedCount = await countGeneratedContent(companyId).catch(() => 0);
+    await touchJob(jobId, { status: "failed", generatedCount: String(savedCount), error: message, model: null }).catch(() => {});
+    if (e instanceof UgcError) throw e;
+    throw new UgcError(message, 502);
+  } finally {
+    inFlight.delete(companyId);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // The generation run
 // ---------------------------------------------------------------------------
 
@@ -857,10 +1184,11 @@ const inFlight = new Set<string>();
 /**
  * Fire-and-forget trigger used by the Brand Intelligence workflow — never throws, never
  * blocks the analysis run, and does nothing when the brand is not ready yet.
+ * Runs the Meme Engine (20 predefined memes × 5 overlay variations).
  */
 export async function maybeStartContentGeneration(input: { companyId: string; userId: string; targetCount?: number }): Promise<void> {
   try {
-    await generateInitialBrandContent(input);
+    await generateMemeBrandContent(input);
   } catch {
     // the reason is persisted on the job row; the analysis flow must not fail because of it
   }
@@ -948,10 +1276,9 @@ export function startContentGenerationWorker(intervalMs = 60_000) {
       for (const job of jobs) {
         if (job.status === "processing" && !isStaleJob(job.status, job.updatedAt)) continue;
         if (inFlight.has(job.companyId)) continue;
-        await generateInitialBrandContent({
+        await generateMemeBrandContent({
           companyId: job.companyId,
           userId: job.userId,
-          targetCount: Number(job.targetCount ?? DEFAULT_TARGET_COUNT),
         }).catch(() => {});
       }
     } catch {

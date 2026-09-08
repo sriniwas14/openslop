@@ -1,5 +1,6 @@
 import type { FeedItem } from '@/services/visual'
 import type { OverlayBlock } from '@/components/feed/MediaTextOverlay'
+import type { MemeGifLayer } from '@/components/feed/MemeGifOverlay'
 
 // ---------------------------------------------------------------------------
 // Content Library — browser-local persistence (per brand) for posts saved
@@ -26,6 +27,10 @@ export type SavedPost = {
   posterUrl: string | null
   /** Overlay text layers exactly as shown in the feed (text, size, position, colours). */
   blocks: OverlayBlock[]
+  /** Layer 3 meme GIF position (x/y % of the composition); null when not a meme. */
+  gifLayer: MemeGifLayer | null
+  /** Stored meme_url snapshot so the GIF renders even if the feed row changes. */
+  memeUrl: string | null
   /** Media aspect (w/h) at save time so Library renders the same frame. */
   aspect: number | null
   /** Posts whose visual needs_review surface under Need Attention. */
@@ -78,7 +83,7 @@ export function listSavedPosts(companyId: string): SavedPost[] {
   const items = read<SavedPost[]>(savedKey(companyId), [])
   // Backfill posts saved before overlay snapshots existed.
   return [...items]
-    .map((p) => ({ ...p, blocks: p.blocks ?? [], aspect: p.aspect ?? null }))
+    .map((p) => ({ ...p, blocks: p.blocks ?? [], gifLayer: p.gifLayer ?? null, memeUrl: p.memeUrl ?? null, aspect: p.aspect ?? null }))
     .sort((a, b) => (b.savedAt ?? '').localeCompare(a.savedAt ?? ''))
 }
 
@@ -91,7 +96,7 @@ export function saveFeedPost(
   item: FeedItem,
   visualUrl: string | null,
   mediaType: 'image' | 'video',
-  extra?: { blocks?: OverlayBlock[]; aspect?: number | null },
+  extra?: { blocks?: OverlayBlock[]; aspect?: number | null; gifLayer?: MemeGifLayer | null },
 ): SavedPost {
   const { content, visualStatus } = item
   const post: SavedPost = {
@@ -108,6 +113,8 @@ export function saveFeedPost(
     mediaType,
     posterUrl: item.visual?.posterUrl ?? item.visual?.previewUrl ?? null,
     blocks: extra?.blocks ?? [],
+    gifLayer: extra?.gifLayer ?? null,
+    memeUrl: content.memeUrl ?? null,
     aspect: extra?.aspect ?? null,
     needsAttention: visualStatus === 'needs_review',
     status: 'draft',

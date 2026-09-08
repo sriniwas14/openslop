@@ -161,6 +161,16 @@ export const generatedContents = sqliteTable(
     model: text("model"),
     promptVersion: text("prompt_version"),
     contentHash: text("content_hash"), // normalized hook+body — retry-safe duplicate guard
+    // ponytail: meme-engine fields — one row per (meme × variation); the meme reference
+    // (meme_url/meme_description/meme) is never separated from its overlay content so the
+    // downstream image/MP4 overlay pipeline can always pair them.
+    memeId: text("meme_id"),
+    memeName: text("meme_name"),
+    memeUrl: text("meme_url"),
+    memeDescription: text("meme_description"),
+    creativeAngle: text("creative_angle"),
+    emotion: text("emotion"),
+    brandAngle: text("brand_angle"),
     visualIntentId: text("visual_intent_id"),
     visualAssetId: text("visual_asset_id"),
     usageCount: text("usage_count").notNull().default("0"),

@@ -68,6 +68,10 @@ export type GeneratedContentDoc = {
   source: string
   model: string | null
   promptVersion: string | null
+  memeId: string | null
+  memeName: string | null
+  memeUrl: string | null
+  memeDescription: string | null
   visualIntentId: string | null
   visualAssetId: string | null
   usageCount: number

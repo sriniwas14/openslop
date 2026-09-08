@@ -28,21 +28,26 @@ export default function ContentFeed() {
   } = useContentFeed(selectedId)
 
   const containerRef = useRef<HTMLDivElement>(null)
+  // mirror for the observer callback so it only reports genuine index changes
+  // without re-subscribing on every scroll step
+  const activeRef = useRef(activeIndex)
+  useEffect(() => {
+    activeRef.current = activeIndex
+  }, [activeIndex])
 
   // -----------------------------------------------------------------------
   // IntersectionObserver — track the most visible item to drive video autoplay.
+  // Single 0.5 threshold + change check: fires once per item, never a jitter
+  // stream that would re-trigger the feed prefetch.
   // -----------------------------------------------------------------------
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
 
-    let bestIndex = 0
-    let bestRatio = 0
-    let bestPending = false
-
     const observer = new IntersectionObserver(
       (entries) => {
-        bestPending = true
+        let bestIndex = -1
+        let bestRatio = 0
         for (const entry of entries) {
           const idx = Number((entry.target as HTMLElement).dataset.feedIndex)
           if (Number.isNaN(idx)) continue
@@ -51,13 +56,11 @@ export default function ContentFeed() {
             bestIndex = idx
           }
         }
-        if (bestPending) {
-          if (bestRatio > 0.5) setActiveIndex(bestIndex)
-          bestRatio = 0
-          bestPending = false
+        if (bestIndex >= 0 && bestRatio >= 0.5 && bestIndex !== activeRef.current) {
+          setActiveIndex(bestIndex)
         }
       },
-      { root: null, threshold: [0, 0.5, 0.8, 1] },
+      { root: null, threshold: 0.5 },
     )
 
     const itemsEls = container.querySelectorAll<HTMLElement>('[data-feed-index]')

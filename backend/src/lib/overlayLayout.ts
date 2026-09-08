@@ -19,7 +19,8 @@ export type OverlayConfig = {
   textAlign: 'center' | 'left' | 'right'
   textColor: string
   strokeColor: string
-  /** Starting fraction of width to derive the base font size (0-1). */
+  /** Starting fraction of width to derive the base font size (0-1).
+   *  Unused while FIXED_FONT_SIZE_PX is in force — kept for back-compat. */
   fontSizePct: number
   /** Fraction of output width — scaled proportionally to resolution. */
   strokeWidthPct: number
@@ -32,23 +33,35 @@ export type OverlayConfig = {
   position: { x: number; y: number }
   /** 0-1 fractions kept away from edges. */
   safeArea: { top: number; bottom: number; left: number; right: number }
-  /** Minimum font size as fraction of width (prevents unreadably small text). */
+  /** Minimum font size as fraction of width (prevents unreadably small
+   *  text). Unused while FIXED_FONT_SIZE_PX is in force — kept for back-compat. */
   minFontSizePct: number
 }
+
+// ---------------------------------------------------------------------------
+// Fixed overlay text size — literal px everywhere (feed card AND export).
+// Mirror of frontend/src/components/feed/overlayConfig.ts.
+// ---------------------------------------------------------------------------
+
+/** Base overlay font size in px. */
+export const FIXED_FONT_SIZE_PX = 14;
+/** Floor for shrink-to-fit on long text. */
+export const FIXED_MIN_FONT_SIZE_PX = 10;
 
 export const DEFAULT_OVERLAY_CONFIG: OverlayConfig = {
   text: '',
   fontFamily: "Inter, 'Inter Variable', Helvetica, Arial, sans-serif",
   fontWeight: 800,
-  // Mirrors frontend/src/components/feed/overlayConfig.ts — compact sizing
-  // for the smaller feed viewport so export matches the preview text size.
-  maxWidthPct: 0.70,
+  // Fixed 14px overlay text — literal px at any container width or export
+  // resolution (not width-derived). Only shrinks for long text, never grows.
+  // fontSizePct/minFontSizePct below are dead while FIXED_FONT_SIZE_PX holds.
+  maxWidthPct: 0.80,
   lineHeight: 1.18,
   letterSpacing: '0em',
   textAlign: 'center',
   textColor: '#FFFFFF',
   strokeColor: '#000000',
-  fontSizePct: 0.069,
+  fontSizePct: 0.055,
   strokeWidthPct: 0.004,
   shadowColor: 'rgba(0,0,0,0.45)',
   shadowBlurPct: 0.005,
@@ -56,7 +69,7 @@ export const DEFAULT_OVERLAY_CONFIG: OverlayConfig = {
   shadowOffsetXPct: 0,
   position: { x: 0.5, y: 0.46 },
   safeArea: { top: 0.1, bottom: 0.12, left: 0.07, right: 0.07 },
-  minFontSizePct: 0.036,
+  minFontSizePct: 0.030,
 }
 
 const ASPECT_OVERRIDES: Record<string, Partial<OverlayConfig>> = {
@@ -78,9 +91,9 @@ export type CompositionPreset = {
   x: number;
   /** % from top (block centre). */
   y: number;
-  /** Base font size as fraction of media width; defaults to 0.023. */
+  /** Base font size as fraction of media width; unused while FIXED_FONT_SIZE_PX holds. */
   size?: number;
-  /** Max text width as fraction of media width; defaults to 0.70. */
+  /** Max text width as fraction of media width; defaults to 0.80. */
   maxWidthPct?: number;
   /** One-line placement directive for AI-baked slide images. */
   directive: string;
@@ -89,28 +102,37 @@ export type CompositionPreset = {
 export const DEFAULT_COMPOSITION = {
   x: 50,
   y: 48,
-  size: 0.069,
-  maxWidthPct: 0.7,
+  size: 0.055,
+  maxWidthPct: 0.8,
 };
 
 export const COMPOSITION_BY_FORMAT: Record<string, CompositionPreset> = {
   wall_of_text_slide: { x: 50, y: 46, directive: "Centre the headline text over the background; text is the hero of this slide." },
-  video_hook: { x: 50, y: 26, size: 0.069, directive: "Place the hook text in the upper third; keep the main subject fully visible." },
+  video_hook: { x: 50, y: 26, size: 0.055, directive: "Place the hook text in the upper third; keep the main subject fully visible." },
   talking_head: { x: 50, y: 24, directive: "Place text in the empty space above the person; never cover the face." },
   ugc_video: { x: 50, y: 26, directive: "Place text in the space around the creator; keep face and product in hand visible." },
   spokesperson: { x: 50, y: 24, directive: "Place text above the person and product; cover neither the face nor the product." },
   green_screen: { x: 50, y: 48, directive: "Centre the text; keep the foreground person fully visible around it." },
   product_demo: { x: 50, y: 24, directive: "Place text above the product; keep product, packaging and demonstrating hands visible." },
-  screen_recording: { x: 50, y: 14, size: 0.066, maxWidthPct: 0.78, directive: "Place text in the top strip only; never cover buttons, navigation or the demonstrated feature." },
-  mobile_app: { x: 50, y: 86, size: 0.066, maxWidthPct: 0.78, directive: "Place text below the phone/app UI; never cover the app interaction." },
-  website_demo: { x: 50, y: 14, size: 0.066, maxWidthPct: 0.78, directive: "Place text in the top strip only; never cover the website element being demonstrated." },
+  screen_recording: { x: 50, y: 14, size: 0.053, maxWidthPct: 0.84, directive: "Place text in the top strip only; never cover buttons, navigation or the demonstrated feature." },
+  mobile_app: { x: 50, y: 86, size: 0.053, maxWidthPct: 0.84, directive: "Place text below the phone/app UI; never cover the app interaction." },
+  website_demo: { x: 50, y: 14, size: 0.053, maxWidthPct: 0.84, directive: "Place text in the top strip only; never cover the website element being demonstrated." },
   clay_motion: { x: 50, y: 24, directive: "Place text above the animated subject; keep the main animation fully visible." },
 };
 
-/** Meme uses a two-block setup/punchline composition, not the single-block presets. */
+/** Meme overlay text (Layer 2): top 20%, centered, ~80% width; 32px reference
+ * size at a 400px-wide composition → size 0.08 (responsive). Mirror of frontend. */
 export const MEME_COMPOSITION = {
-  setup: { x: 50, y: 18, size: 0.069, directive: "Place the setup line at the very top of the image." },
+  setup: { x: 50, y: 20, size: 0.08, maxWidthPct: 0.80, fontWeight: 700, directive: "Place the overlay text at the very top of the image." },
   punchline: { x: 50, y: 82, size: 0.069, directive: "Place the punchline at the very bottom of the image." },
+} as const;
+
+/** Meme GIF overlay (Layer 3) default position — mirror of frontend. */
+export const MEME_GIF_COMPOSITION = {
+  x: 50,
+  y: 65,
+  widthPct: 0.70,
+  maxHeightPct: 0.55,
 } as const;
 
 /**
@@ -151,12 +173,13 @@ export function wrapTextLines(text: string, maxWidthPx: number, fontSize: number
   if (words.length === 0) return [""];
 
   const charW = estimateCharWidth(fontSize);
+  const measure = (s: string) => s.length * charW;
   const lines: string[] = [];
   let line = words[0];
 
   for (let i = 1; i < words.length; i++) {
     const next = line + " " + words[i];
-    if (next.length * charW <= maxWidthPx) {
+    if (measure(next) <= maxWidthPx) {
       line = next;
     } else {
       lines.push(line);
@@ -164,7 +187,35 @@ export function wrapTextLines(text: string, maxWidthPx: number, fontSize: number
     }
   }
   lines.push(line);
-  return lines;
+  return balanceLastPair(lines, maxWidthPx, measure);
+}
+
+// Rebalance the last pair: the split minimizing the longest line wins, so a
+// wrap to line 2 fills the available width with even halves instead of
+// stranding an orphan. Mirror of frontend balanceLastPair.
+function balanceLastPair(lines: string[], maxWidthPx: number, measure: (s: string) => number): string[] {
+  if (lines.length < 2) return lines;
+  const words = `${lines[lines.length - 2]} ${lines[lines.length - 1]}`.split(" ").filter(Boolean);
+  if (words.length < 2) return lines;
+  let best = -1;
+  let bestMax = Infinity;
+  for (let k = 1; k < words.length; k++) {
+    const first = words.slice(0, k).join(" ");
+    const rest = words.slice(k).join(" ");
+    const w1 = measure(first);
+    const w2 = measure(rest);
+    if (w1 > maxWidthPx || w2 > maxWidthPx) continue;
+    const m = Math.max(w1, w2);
+    if (m < bestMax) {
+      bestMax = m;
+      best = k;
+    }
+  }
+  if (best < 0) return lines;
+  const out = [...lines];
+  out[out.length - 2] = words.slice(0, best).join(" ");
+  out[out.length - 1] = words.slice(best).join(" ");
+  return out;
 }
 
 export type OverlayLayout = {
@@ -227,8 +278,9 @@ export function computeOverlayLayout(
   const availableHeight = h - safeTop - safeBottom;
   const maxWidthPx = w * cfg.maxWidthPct;
 
-  let fontSize = w * cfg.fontSizePct;
-  const minFontSize = w * cfg.minFontSizePct;
+  // Fixed 14px start; shrink only until lines fit (never grow).
+  let fontSize = FIXED_FONT_SIZE_PX;
+  const minFontSize = FIXED_MIN_FONT_SIZE_PX;
   const lineHeightPx = () => Math.round(fontSize * cfg.lineHeight);
 
   let lines: string[] = [];
@@ -239,7 +291,7 @@ export function computeOverlayLayout(
     lines = wrapTextLines(text, maxWidthPx, fontSize);
     blockHeight = lines.length * lh;
     if (blockHeight <= availableHeight && lines.length <= 12) break;
-    fontSize -= w * 0.003;
+    fontSize -= 0.5;
     if (fontSize < minFontSize) {
       fontSize = minFontSize;
       const lh2 = lineHeightPx();

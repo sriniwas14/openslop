@@ -35,6 +35,8 @@ const GENERIC_TAGS = new Set(
 );
 
 // visualCategory → concrete, believable photo scenes (the fallback when tags are thin).
+// ponytail: meme rows ignore CATEGORY_SEEDS — their base is scenic, not people.
+// See MEME_BACKGROUND_QUERIES below; the reaction lives in the Layer-3 GIF overlay.
 const CATEGORY_SEEDS: Record<VisualCategory, string[]> = {
   creator_lifestyle: ["content creator filming phone", "young person at home phone", "creator recording selfie video"],
   workspace: ["person working laptop desk", "modern home office desk", "founder working laptop natural light"],
@@ -61,6 +63,64 @@ const STYLE_MODIFIERS: Record<VisualStyle, string> = {
   cinematic: "cinematic natural light",
   illustration: "simple flat scene",
 };
+
+// ---------------------------------------------------------------------------
+// Meme base visuals — portrait scenic/aesthetic Pexels photos, no people.
+// Memes compose as: Layer 1 (this Pexels scenic base) + Layer 2 (overlay text)
+// + Layer 3 (the meme GIF from meme_url). The reaction comes from the GIF, so
+// the base must be people-free: landscapes, buildings, interiors, textures.
+// All queries are ≤6 words and portrait-friendly. Pure constant, no I/O.
+// ---------------------------------------------------------------------------
+
+/** Scenic meme base pool — cycled per row so a brand's feed isn't one texture. */
+export const MEME_BACKGROUND_QUERIES = [
+  "misty mountain landscape soft light",
+  "modern city buildings looking up",
+  "minimal beige wall texture",
+  "calm ocean horizon soft light",
+  "empty cozy interior natural light",
+  "green forest path fog",
+  "aesthetic desk flat lay minimal",
+  "dramatic cloudy sky dusk",
+  "modern architecture concrete minimal",
+  "warm sunset field horizon",
+] as const;
+
+/** Concrete mood words worth appending to one meme query (aesthetic light, not people). */
+const MEME_MOOD_WORDS = new Set(
+  "soft aesthetic calm cozy minimal warm dramatic serene moody bright natural dusk fog mist golden".split(" "),
+);
+
+function isMemeFormat(meta: VisualQueryMeta): boolean {
+  return String(meta.contentFormat ?? "").toLowerCase() === "meme";
+}
+
+/**
+ * Build 2-3 scenic meme base queries. Deterministic per row: starts at a hash of
+ * the row's tags so neighbouring memes in a batch get different scenery, then
+ * cycles the pool. A concrete mood word (soft light, cozy…) may suffix one query.
+ */
+export function buildMemeBackgroundQueries(meta: VisualQueryMeta, max = 3): string[] {
+  const seedTags = (meta.visualTags ?? []).join(" ").toLowerCase();
+  let hash = 0;
+  for (let i = 0; i < seedTags.length; i++) hash = (hash * 31 + seedTags.charCodeAt(i)) >>> 0;
+  const mood = concreteMoodWords(meta.visualMood).find((w) => MEME_MOOD_WORDS.has(w.split(" ")[0]));
+  const out: string[] = [];
+  const n = Math.max(2, Math.min(max, MEME_BACKGROUND_QUERIES.length));
+  for (let i = 0; i < n; i++) {
+    const base = MEME_BACKGROUND_QUERIES[(hash + i) % MEME_BACKGROUND_QUERIES.length];
+    // suffix the mood word onto the first query only when it adds nothing redundant
+    if (i === 0 && mood && !base.includes(mood.split(" ")[0])) out.push(clampWords(`${base} ${mood.split(" ")[0]}`));
+    else out.push(base);
+  }
+  return dedupe(out.map(clampWords)).slice(0, n);
+}
+
+/** Remaining pool entries not yet tried — the meme retry pass (never tag-derived). */
+export function refineMemeBackgroundQueries(meta: VisualQueryMeta, alreadyTried: string[] = [], max = 4): string[] {
+  const tried = new Set(alreadyTried.map((q) => q.trim().toLowerCase()));
+  return MEME_BACKGROUND_QUERIES.filter((q) => !tried.has(q.toLowerCase())).slice(0, max);
+}
 
 const MAX_WORDS = 6;
 
@@ -110,8 +170,10 @@ function concreteMoodWords(mood?: string | null): string[] {
 /**
  * Build 3-5 concrete visual search queries, ordered most-specific → broadest.
  * queryIndex 0 is the tightest query; the scorer rewards candidates from earlier queries.
+ * Meme rows take the scenic-background path (Layer-1 base, no people) instead.
  */
 export function buildVisualQueries(meta: VisualQueryMeta, max = 5): string[] {
+  if (isMemeFormat(meta)) return buildMemeBackgroundQueries(meta, Math.max(2, Math.min(max, 3)));
   const tags = dedupe((meta.visualTags ?? []).map(cleanTag).filter((t) => !isUselessTag(t)));
   const seeds = CATEGORY_SEEDS[(meta.visualCategory as VisualCategory) ?? ""] ?? [];
   const styleMod = STYLE_MODIFIERS[(meta.visualStyle as VisualStyle) ?? ""] ?? "";
@@ -150,8 +212,10 @@ export function buildVisualQueries(meta: VisualQueryMeta, max = 5): string[] {
  * Refined (broader) queries for the retry pass when nothing cleared the threshold.
  * Leans on category scenes and 2-word tag combos, dropping the narrow style/mood
  * modifiers so the pool widens instead of repeating the same failed search.
+ * Meme rows cycle the remaining scenic-pool entries instead (never tag-derived).
  */
 export function refineVisualQueries(meta: VisualQueryMeta, alreadyTried: string[] = [], max = 4): string[] {
+  if (isMemeFormat(meta)) return refineMemeBackgroundQueries(meta, alreadyTried, max);
   const tried = new Set(alreadyTried.map((q) => q.trim().toLowerCase()));
   const tags = dedupe((meta.visualTags ?? []).map(cleanTag).filter((t) => !isUselessTag(t)));
   const seeds = CATEGORY_SEEDS[(meta.visualCategory as VisualCategory) ?? ""] ?? [];

@@ -17,6 +17,20 @@ function assertChatProvider(provider: string) {
   }
 }
 
+// ponytail: fail fast on a missing/truncated key — otherwise the upstream 401
+// ("Missing Authentication header") surfaces with no hint about which setting to fix
+function requireApiKey(provider: string, apiKey: string | null | undefined): string {
+  if (provider === "ollama" || provider === "custom") return apiKey ?? "not-set";
+  const key = (apiKey ?? "").trim();
+  if (!key) throw new Error(`${provider} API key is missing — set it in Settings → AI Providers`);
+  // ponytail: real keys are 40+ chars (openrouter ~73, openai ~51, anthropic 100+);
+  // google AI Studio keys are 39. Anything shorter is a truncated paste.
+  const min = provider === "google" ? 30 : 40;
+  if (key.length < min)
+    throw new Error(`${provider} API key looks incomplete (${key.length} chars) — paste the full key in Settings → AI Providers`);
+  return key;
+}
+
 // ponytail: strict DB-only — no env fallback; provider-aware routing so openrouter key hits openrouter, not api.openai.com
 // task-aware: uses ai_preferences fallback to isDefault/first
 export async function resolveUserModel(userId: string, task: TaskKind = "default") {
@@ -34,7 +48,7 @@ export async function resolveUserModel(userId: string, task: TaskKind = "default
           const provider = row.provider as string;
           assertChatProvider(provider);
           const model = pair.model;
-          const apiKey = row.apiKey ?? "not-set";
+          const apiKey = requireApiKey(provider, row.apiKey);
           if (provider === "ollama") return createOllama(row.baseUrl ? { baseURL: row.baseUrl } : undefined)(model);
           if (provider === "anthropic") {
             if (row.baseUrl) return createOpenAI({ apiKey, baseURL: row.baseUrl })(model);
@@ -53,7 +67,7 @@ export async function resolveUserModel(userId: string, task: TaskKind = "default
         throw new Error(`Configure ${task} provider + model in Settings → AI Providers (both required)`);
       }
     } catch (e: any) {
-      if (e?.message?.includes("Configure") || e?.message?.includes("media generation adapters")) throw e;
+      if (e?.message?.includes("Configure") || e?.message?.includes("media generation adapters") || e?.message?.includes("API key")) throw e;
       // table missing before migration — fall through
     }
   }
@@ -71,7 +85,7 @@ export async function resolveUserModel(userId: string, task: TaskKind = "default
   const provider = cfg.provider as string;
   assertChatProvider(provider);
   const model = cfg.model!;
-  const apiKey = cfg.apiKey ?? "not-set";
+  const apiKey = requireApiKey(provider, cfg.apiKey);
   if (provider === "ollama") {
     return createOllama(cfg.baseUrl ? { baseURL: cfg.baseUrl } : undefined)(model);
   }

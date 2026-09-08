@@ -6,6 +6,9 @@ export const sqlite = new Database("db.sqlite");
 sqlite.exec("PRAGMA foreign_keys = ON");
 // ponytail: lazy migrate for router configId (alter table, ignore if exists)
 try { sqlite.exec("ALTER TABLE ai_config ADD COLUMN config_id TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE ai_config ADD COLUMN access_key TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE ai_config ADD COLUMN secret_key TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE ai_config ADD COLUMN service_account_json TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE media_job ADD COLUMN router_config_id TEXT"); } catch {}
 try { sqlite.exec("ALTER TABLE content ADD COLUMN influencer_id TEXT"); } catch {}
 // ponytail: lazy create — app doesn't auto-run drizzle migrations on boot; idempotent with 0008 migration
@@ -99,6 +102,15 @@ try {
 // generated_content. ALTER TABLE ... ADD COLUMN is wrapped so an existing column is a no-op.
 try { sqlite.exec("ALTER TABLE generated_content ADD COLUMN visual_search_status TEXT NOT NULL DEFAULT 'pending'"); } catch {}
 try { sqlite.exec("ALTER TABLE generated_content ADD COLUMN visual_search_error TEXT"); } catch {}
+// ponytail: meme-engine columns (idempotent with the 0016 migration) — nullable so
+// existing generic rows and the downstream media pipeline are unaffected.
+try { sqlite.exec("ALTER TABLE generated_content ADD COLUMN meme_id TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE generated_content ADD COLUMN meme_name TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE generated_content ADD COLUMN meme_url TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE generated_content ADD COLUMN meme_description TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE generated_content ADD COLUMN creative_angle TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE generated_content ADD COLUMN emotion TEXT"); } catch {}
+try { sqlite.exec("ALTER TABLE generated_content ADD COLUMN brand_angle TEXT"); } catch {}
 try {
   sqlite.exec("CREATE INDEX IF NOT EXISTS idx_generated_content_visual_search ON generated_content (company_id, visual_search_status)");
 } catch {}

@@ -3,7 +3,8 @@ import { Bold, ImagePlus, RotateCcw, Trash2, Clapperboard } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import type { OverlayBlock } from '@/components/feed/MediaTextOverlay'
-import { computeOverlayLayout, HIGHLIGHT } from '@/components/feed/overlayConfig'
+import type { MemeGifLayer } from '@/components/feed/MemeGifOverlay'
+import { computeOverlayLayout, HIGHLIGHT, LAYER_TYPE_PRESETS, layerTypePreset } from '@/components/feed/overlayConfig'
 
 export const textColors = ['#ffffff', '#171717', '#FF941F', '#facc15', '#ef4444', '#38bdf8', '#22c55e']
 export const bgColors = ['#ffffff', '#171717', '#FF941F', '#facc15', '#ef4444', '#38bdf8', '#22c55e']
@@ -49,6 +50,11 @@ type Props = {
   onRemove: (id: string) => void
   onUploadMedia: (file: File) => void
   onRevertImage: () => void
+  /** Meme GIF layer (Layer 3) — present only for meme posts. */
+  gifLayer?: MemeGifLayer | null
+  gifSelected?: boolean
+  onSelectGif?: () => void
+  onPatchGif?: (p: Partial<MemeGifLayer>) => void
 }
 
 export default function OverlayEditorPanel({
@@ -64,6 +70,10 @@ export default function OverlayEditorPanel({
   onRemove,
   onUploadMedia,
   onRevertImage,
+  gifLayer,
+  gifSelected,
+  onSelectGif,
+  onPatchGif,
 }: Props) {
   const selected = blocks.find((b) => b.id === selectedId) ?? null
   const selectedIndex = selected ? blocks.findIndex((b) => b.id === selected.id) : -1
@@ -79,7 +89,7 @@ export default function OverlayEditorPanel({
     const layout = computeOverlayLayout(selected.text, previewSize, {
       fontSizePct: selected.size,
       position: { x: selected.x / 100, y: selected.y / 100 },
-      maxWidthPct: selected.maxWidthPct ?? 0.70,
+      maxWidthPct: selected.maxWidthPct ?? 0.80,
       textColor: selected.color,
       fontWeight: selected.bold ? 800 : 500,
       ...(selected.backgroundEnabled ? { lineHeight: HIGHLIGHT.lineHeight } : {}),
@@ -121,19 +131,57 @@ export default function OverlayEditorPanel({
                 aria-pressed={b.id === selectedId}
                 onClick={() => onSelect(b.id)}
               >
-                Layer {i + 1}
+                Layer {i + 1}{b.layerType ? ` · ${layerTypePreset(b.layerType)?.label ?? b.layerType}` : ''}
               </Button>
             ))}
           </div>
         )}
       </div>
 
-      {/* 2 · Selected-layer controls: text, size, position, style */}
+      {/* 2 · Layer type — single-select style preset for the selected layer */}
+      {selected ? (
+        <div className="grid gap-1.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            2 · Layer type
+          </p>
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            Pick one style for this layer — position, size and colours apply at once. The text stays yours to edit below.
+          </p>
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Layer type">
+            {LAYER_TYPE_PRESETS.map((preset) => (
+              <Button
+                key={preset.id}
+                type="button"
+                variant={selected.layerType === preset.id ? 'secondary' : 'outline'}
+                size="xs"
+                aria-pressed={selected.layerType === preset.id}
+                title={`${preset.label} style`}
+                onClick={() =>
+                  onPatch(selected.id, {
+                    layerType: preset.id,
+                    x: preset.x,
+                    y: preset.y,
+                    size: preset.size,
+                    color: preset.color,
+                    backgroundEnabled: preset.backgroundEnabled,
+                    backgroundColor: preset.backgroundColor,
+                    bold: preset.bold,
+                  })
+                }
+              >
+                {preset.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {/* 3 · Selected-layer controls: text, size, position, style */}
       {selected ? (
         <div className="grid gap-2 rounded-lg border p-2.5">
           <div className="flex items-center justify-between gap-2">
             <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              2 · Editing layer {selectedIndex + 1}
+              3 · Editing layer {selectedIndex + 1}
             </span>
             <span className="text-[11px] tabular-nums text-muted-foreground">
               {selectedLineCount !== null && (
@@ -154,20 +202,10 @@ export default function OverlayEditorPanel({
             />
           </label>
           <div className="grid gap-1.5">
-            <label className="flex items-center gap-1 text-xs text-muted-foreground">
-              <span className="w-16 shrink-0 font-medium text-foreground">Size {Math.round(selected.size * 100)}%</span>
-              <input
-                type="range"
-                min={3}
-                max={10}
-                step={0.5}
-                value={Math.round(selected.size * 100)}
-                onChange={(e) => onPatch(selected.id, { size: Number(e.target.value) / 100 })}
-                className="flex-1 accent-primary"
-                aria-label="Font size"
-                title="Drag to make the text bigger or smaller"
-              />
-            </label>
+            <div className="flex items-center gap-1 text-xs text-muted-foreground" title="Font size is fixed at 14px">
+              <span className="w-16 shrink-0 font-medium text-foreground">Size 14px</span>
+              <span className="flex-1 text-[11px]">Fixed — long text shrinks automatically to fit.</span>
+            </div>
             <label className="flex items-center gap-1 text-xs text-muted-foreground">
               <span className="w-16 shrink-0 font-medium text-foreground">Across {Math.round(selected.x)}%</span>
               <input
@@ -310,10 +348,10 @@ export default function OverlayEditorPanel({
         </p>
       )}
 
-      {/* 3 · Background media — replace the photo/video behind the text */}
+      {/* 4 · Background media — replace the photo/video behind the text */}
       <div className="grid gap-1.5 rounded-lg border p-2.5">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          3 · Background {mediaNoun}
+          4 · Background {mediaNoun}
         </p>
         <p className="text-[11px] leading-snug text-muted-foreground">
           Swap the {mediaNoun} behind your text. Your layers stay exactly where they are.
@@ -372,6 +410,60 @@ export default function OverlayEditorPanel({
           <dd className="font-medium">{selected ? (selected.backgroundEnabled ? 'On' : 'Off') : '—'}</dd>
         </div>
       </dl>
+
+      {/* Meme GIF layer (Layer 3) — position of the meme_url overlay */}
+      {gifLayer && onPatchGif && (
+        <div className="grid gap-1.5 rounded-lg border p-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              GIF overlay
+            </p>
+            <span className="text-[11px] tabular-nums text-muted-foreground">
+              X {Math.round(gifLayer.x)}% · Y {Math.round(gifLayer.y)}%
+            </span>
+          </div>
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            Position of the meme image above the background. Tap it in the preview — or drag it — to move it.
+          </p>
+          <Button
+            type="button"
+            variant={gifSelected ? 'secondary' : 'outline'}
+            size="xs"
+            aria-pressed={!!gifSelected}
+            onClick={() => onSelectGif?.()}
+          >
+            {gifSelected ? 'GIF selected' : 'Select GIF layer'}
+          </Button>
+          <label className="flex items-center gap-1 text-xs text-muted-foreground">
+            <span className="w-16 shrink-0 font-medium text-foreground">Across {Math.round(gifLayer.x)}%</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={Math.round(gifLayer.x)}
+              onChange={(e) => onPatchGif({ x: Number(e.target.value) })}
+              className="flex-1 accent-primary"
+              aria-label="GIF horizontal position"
+              title="Drag to move the GIF left or right"
+            />
+          </label>
+          <label className="flex items-center gap-1 text-xs text-muted-foreground">
+            <span className="w-16 shrink-0 font-medium text-foreground">Up/down {Math.round(gifLayer.y)}%</span>
+            <input
+              type="range"
+              min={0}
+              max={100}
+              step={1}
+              value={Math.round(gifLayer.y)}
+              onChange={(e) => onPatchGif({ y: Number(e.target.value) })}
+              className="flex-1 accent-primary"
+              aria-label="GIF vertical position"
+              title="Drag to move the GIF up or down"
+            />
+          </label>
+        </div>
+      )}
     </div>
   )
 }

@@ -63,8 +63,10 @@ export async function companyRoutes(app: FastifyInstance) {
 
         try {
           await (stream as any).result;
-        } catch {
-          // ponytail: workflow failed — error event handled below, "just try again"
+        } catch (e: any) {
+          // ponytail: surface the real cause (bad key, no provider) in the error event below
+          write("progress", { type: "workflow-error", message: e?.message ?? String(e) });
+          (request as any).workflowError = e?.message ?? String(e);
         }
 
         const [fresh] = await db
@@ -84,7 +86,7 @@ export async function companyRoutes(app: FastifyInstance) {
         } else {
           // ponytail: atomic create — delete orphan so wizard doesn't complete
           await db.delete(companies).where(eq(companies.id, row.id)).catch(() => {});
-          if (!closed) write("error", { message: "persona generation failed" });
+          if (!closed) write("error", { message: (request as any).workflowError ?? "persona generation failed" });
           return;
         }
       } catch (e: any) {

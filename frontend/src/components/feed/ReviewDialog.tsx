@@ -14,6 +14,7 @@ import { useToast } from '@/components/ui/toast'
 import { type FeedItem, visualSrc } from '@/services/visual'
 import { isPostSaved, saveFeedPost } from '@/services/library'
 import type { OverlayBlock } from '@/components/feed/MediaTextOverlay'
+import type { MemeGifLayer } from '@/components/feed/MemeGifOverlay'
 
 // ---------------------------------------------------------------------------
 // Review popup — opened from the feed's Review button. Two options:
@@ -31,9 +32,11 @@ type Props = {
   /** Live overlay layers + fitted aspect from the feed card. */
   blocks: OverlayBlock[]
   aspect: number | null
+  /** Layer 3 meme GIF position from the feed card (meme posts only). */
+  gifLayer?: MemeGifLayer | null
 }
 
-export default function ReviewDialog({ open, onOpenChange, item, visualUrl, mediaType, blocks, aspect }: Props) {
+export default function ReviewDialog({ open, onOpenChange, item, visualUrl, mediaType, blocks, aspect, gifLayer }: Props) {
   const { toast } = useToast()
   const navigate = useNavigate()
   const [saved, setSaved] = useState(false)
@@ -55,7 +58,7 @@ export default function ReviewDialog({ open, onOpenChange, item, visualUrl, medi
     if (!item) return
     setSaving(true)
     try {
-      saveFeedPost(item.content.companyId, item, visualUrl ?? visualSrc(item.visual), mediaType, { blocks, aspect })
+      saveFeedPost(item.content.companyId, item, visualUrl ?? visualSrc(item.visual), mediaType, { blocks, aspect, gifLayer: gifLayer ?? null })
       setSaved(true)
       toast({ title: 'Saved to Library', description: 'Find it under Library → My Content.', variant: 'success' })
     } catch {
@@ -63,7 +66,7 @@ export default function ReviewDialog({ open, onOpenChange, item, visualUrl, medi
     } finally {
       setSaving(false)
     }
-  }, [item, visualUrl, mediaType, blocks, aspect, toast])
+  }, [item, visualUrl, mediaType, blocks, aspect, gifLayer, toast])
 
   const handleShare = useCallback(async () => {
     if (!item) return

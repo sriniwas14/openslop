@@ -1,5 +1,6 @@
 import type { OverlayBlock } from '@/components/feed/MediaTextOverlay'
-import { computeOverlayLayout, HIGHLIGHT } from '@/components/feed/overlayConfig'
+import { computeOverlayLayout, HIGHLIGHT, MEME_GIF_COMPOSITION } from '@/components/feed/overlayConfig'
+import type { MemeGifLayer } from '@/components/feed/MemeGifOverlay'
 
 // ---------------------------------------------------------------------------
 // Client-side export — bakes overlay text layers into the downloaded file so
@@ -8,12 +9,20 @@ import { computeOverlayLayout, HIGHLIGHT } from '@/components/feed/overlayConfig
 // Layout comes from the shared engine (computeOverlayLayout), so wrapping,
 // sizing and positioning match the preview: every fraction is relative to
 // the full output frame, exactly like the on-screen overlay box.
+//
+// Meme posts additionally bake the Layer 3 GIF's first frame (an animated
+// GIF cannot survive a PNG/WebM-canvas export — the still frame is the
+// documented fallback), composited UNDER the text like the live preview.
 // ---------------------------------------------------------------------------
 
 export type ExportInput = {
   url: string
   mediaType: 'image' | 'video'
   blocks: OverlayBlock[]
+  /** Stored meme_url — baked as Layer 3 when present. */
+  memeUrl?: string | null
+  /** Layer 3 position (% composition coords); defaults to the composition. */
+  gifLayer?: MemeGifLayer | null
 }
 
 function loadImage(url: string): Promise<HTMLImageElement> {
@@ -58,9 +67,9 @@ function drawBlock(ctx: CanvasRenderingContext2D, block: OverlayBlock, W: number
     {
       fontSizePct: block.size,
       position: { x: block.x / 100, y: block.y / 100 },
-      maxWidthPct: block.maxWidthPct ?? 0.7,
+      maxWidthPct: block.maxWidthPct ?? 0.8,
       textColor: block.color,
-      fontWeight: block.bold ? 800 : 500,
+      fontWeight: block.fontWeight ?? (block.bold ? 800 : 500),
       ...(bgOn ? { lineHeight: HIGHLIGHT.lineHeight } : {}),
     },
   )
@@ -133,6 +142,42 @@ function paintBlocks(ctx: CanvasRenderingContext2D, blocks: OverlayBlock[], W: n
   }
 }
 
+/** Paint the Layer 3 meme GIF first frame at its composition position. */
+function paintGifLayer(
+  ctx: CanvasRenderingContext2D,
+  gif: HTMLImageElement,
+  gifLayer: MemeGifLayer | null | undefined,
+  W: number,
+  H: number,
+) {
+  const gw = gif.naturalWidth || 0
+  const gh = gif.naturalHeight || 0
+  if (!gw || !gh) return
+  const layer = gifLayer ?? { x: MEME_GIF_COMPOSITION.x, y: MEME_GIF_COMPOSITION.y }
+  // Same box as the preview: width 70% of the frame, aspect preserved,
+  // capped at 55% of the frame height.
+  const targetW = W * MEME_GIF_COMPOSITION.widthPct
+  let dw = targetW
+  let dh = (gh / gw) * dw
+  const maxH = H * MEME_GIF_COMPOSITION.maxHeightPct
+  if (dh > maxH) {
+    dh = maxH
+    dw = (gw / gh) * dh
+  }
+  const cx = (layer.x / 100) * W
+  const cy = (layer.y / 100) * H
+  ctx.drawImage(gif, cx - dw / 2, cy - dh / 2, dw, dh)
+}
+
+async function loadGifFirstFrame(memeUrl: string | null | undefined): Promise<HTMLImageElement | null> {
+  if (!memeUrl) return null
+  try {
+    return await loadImage(memeUrl)
+  } catch {
+    return null // broken meme_url must never fail the whole export
+  }
+}
+
 function canvasToBlob(canvas: HTMLCanvasElement, type: string): Promise<Blob> {
   return new Promise((resolve, reject) => {
     canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('encode failed'))), type)
@@ -158,13 +203,15 @@ export async function exportImageWithOverlay(input: ExportInput, filename: strin
   const img = await loadImage(input.url)
   const W = img.naturalWidth || 1080
   const H = img.naturalHeight || 1350
-  await ensureFont(800)
+  await ensureFont(700)
   const canvas = document.createElement('canvas')
   canvas.width = W
   canvas.height = H
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('no 2d context')
   paintFrame(ctx, img, img.naturalWidth, img.naturalHeight, W, H)
+  const gif = await loadGifFirstFrame(input.memeUrl)
+  if (gif) paintGifLayer(ctx, gif, input.gifLayer, W, H)
   paintBlocks(ctx, input.blocks, W, H)
   // Throws on taint (no CORS headers) — caller handles the fallback.
   downloadBlob(await canvasToBlob(canvas, 'image/png'), filename)
@@ -183,7 +230,8 @@ export async function exportVideoWithOverlay(
   const v = await loadVideo(input.url)
   const W = v.videoWidth || 720
   const H = v.videoHeight || 1280
-  await ensureFont(800)
+  await ensureFont(700)
+  const gif = await loadGifFirstFrame(input.memeUrl)
 
   const canRecord =
     typeof HTMLCanvasElement !== 'undefined' &&
@@ -192,6 +240,7 @@ export async function exportVideoWithOverlay(
 
   const paint = (ctx: CanvasRenderingContext2D) => {
     paintFrame(ctx, v, v.videoWidth, v.videoHeight, W, H)
+    if (gif) paintGifLayer(ctx, gif, input.gifLayer, W, H)
     paintBlocks(ctx, input.blocks, W, H)
   }
 

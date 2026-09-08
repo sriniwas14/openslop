@@ -16,6 +16,7 @@ import { useToast } from '@/components/ui/toast'
 import { type FeedItem, visualSrc } from '@/services/visual'
 import { platformMeta, formatLabel, typeLabel } from '@/components/feed/data'
 import MediaTextOverlay, { overlayBlocksForContent, type OverlayBlock } from '@/components/feed/MediaTextOverlay'
+import MemeGifOverlay, { DEFAULT_MEME_GIF_LAYER, type MemeGifLayer } from '@/components/feed/MemeGifOverlay'
 import OverlayEditorDialog from '@/components/feed/OverlayEditorDialog'
 import ReviewDialog from '@/components/feed/ReviewDialog'
 
@@ -57,6 +58,10 @@ export default function ContentFeedItem({ item, isActive }: Props) {
   // Overlay layers + custom media live on the card. Popup edits work on a
   // private draft — the feed (and these states) only change on Done.
   const [blocks, setBlocks] = useState<OverlayBlock[]>(() => overlayBlocksForContent(content))
+  // Layer 3 of the meme composition: position of the meme_url GIF overlay.
+  // Session-local per post (resets with the post, like blocks); persisted to
+  // the Library snapshot on save via ReviewDialog.
+  const [gifLayer, setGifLayer] = useState<MemeGifLayer>(DEFAULT_MEME_GIF_LAYER)
   const [mediaOverride, setMediaOverride] = useState<{ url: string; kind: 'image' | 'video' } | null>(null)
   const [editorOpen, setEditorOpen] = useState(false)
   const [editorSelectedId, setEditorSelectedId] = useState<string | null>(null)
@@ -70,6 +75,7 @@ export default function ContentFeedItem({ item, isActive }: Props) {
   // Fresh layers per post.
   useEffect(() => {
     setBlocks(overlayBlocksForContent(content))
+    setGifLayer(DEFAULT_MEME_GIF_LAYER)
     setNatural(null)
     setMediaOverride((prev) => {
       if (prev) URL.revokeObjectURL(prev.url)
@@ -112,8 +118,9 @@ export default function ContentFeedItem({ item, isActive }: Props) {
     setReviewOpen(true)
   }, [])
 
-  const applyEditor = useCallback((nextBlocks: OverlayBlock[], nextUrl: string | null, nextKind: 'image' | 'video') => {
+  const applyEditor = useCallback((nextBlocks: OverlayBlock[], nextUrl: string | null, nextKind: 'image' | 'video', nextGif?: MemeGifLayer) => {
     setBlocks(nextBlocks)
+    if (nextGif) setGifLayer(nextGif)
     setMediaOverride((prev) => {
       if (prev && prev.url !== nextUrl) URL.revokeObjectURL(prev.url)
       return nextUrl ? { url: nextUrl, kind: nextKind } : null
@@ -133,6 +140,7 @@ export default function ContentFeedItem({ item, isActive }: Props) {
     (explicitKind == null &&
       !!src &&
       (hasVideoExtension(src) || !IMAGE_CONTENT_FORMATS.has(content.contentFormat)))
+  const isMeme = content.contentFormat === 'meme'
   const isPending = visualStatus === 'pending' || visualStatus === 'searching'
   const isFailed = visualStatus === 'failed'
   const isReview = visualStatus === 'needs_review'
@@ -196,8 +204,9 @@ export default function ContentFeedItem({ item, isActive }: Props) {
             <PendingVisual />
           )}
 
-          {/* Read-only UGC-style text overlay. Tap a layer to open the visual
-              layout editor popup (draft-based, applies on Done). */}
+          {/* Layer 2: generated overlay text (meme: top 20%, centered, 80%).
+              Read-only here — tap a layer to open the visual layout editor
+              popup (draft-based, applies on Done). */}
           {src && !isPending && !isFailed && (
             <MediaTextOverlay
               blocks={blocks}
@@ -207,6 +216,17 @@ export default function ContentFeedItem({ item, isActive }: Props) {
               onSelect={() => {}}
               onPatch={patchBlocks}
               onTextClick={openEditor}
+            />
+          )}
+
+          {/* Layer 3: meme GIF overlay from the stored meme_url — above the
+              base image (Layer 1) and the text (Layer 2), inside the same
+              composition. Read-only on the card; drag to reposition in Edit. */}
+          {isMeme && src && !isPending && !isFailed && (
+            <MemeGifOverlay
+              src={content.memeUrl}
+              alt={content.memeName ?? content.hook ?? 'Meme overlay'}
+              layer={gifLayer}
             />
           )}
         </div>
@@ -257,6 +277,7 @@ export default function ContentFeedItem({ item, isActive }: Props) {
         initialImageOverride={mediaOverride?.url ?? null}
         initialMediaKind={mediaOverride?.kind ?? null}
         initialSelectedId={editorSelectedId}
+        initialGifLayer={gifLayer}
         mediaAspect={mediaAspect}
         onApply={applyEditor}
       />
@@ -270,6 +291,7 @@ export default function ContentFeedItem({ item, isActive }: Props) {
         mediaType={isVideo ? 'video' : 'image'}
         blocks={blocks}
         aspect={mediaAspect}
+        gifLayer={isMeme ? gifLayer : undefined}
       />
     </article>
   )

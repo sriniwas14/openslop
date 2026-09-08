@@ -97,7 +97,7 @@ const FORMAT_KEYWORDS: Record<string, string[]> = {
   mobile_app: ["phone", "smartphone", "app", "screen", "mobile", "hands"],
   clay_motion: ["craft", "clay", "playful", "colorful", "object", "hands"],
   website_demo: ["laptop", "screen", "computer", "desk", "website", "working"],
-  meme: ["funny", "person", "people", "reaction", "expression", "pet"],
+  meme: ["landscape", "mountain", "building", "city", "sky", "texture", "minimal", "nature", "interior", "architecture"],
   ugc_video: ["creator", "phone", "selfie", "candid", "home", "everyday"],
 };
 
@@ -105,6 +105,13 @@ const FORMAT_KEYWORDS: Record<string, string[]> = {
 const VERTICAL_PLATFORMS = new Set(["instagram", "tiktok", "youtube_shorts", "facebook"]);
 
 const UGC_POSITIVE = ["candid", "natural", "casual", "everyday", "home", "smartphone", "selfie", "authentic", "lifestyle", "cozy", "real"];
+
+// Meme base images must be people-free (scenic Layer-1 under the overlay text +
+// reaction GIF). "portrait" refers to portrait PHOTOGRAPHY (a person) here, not
+// the orientation column — scenic alts essentially never use it that way.
+// ponytail: alt-text heuristic — Pexels has no face filter; odd false negatives
+// land in needs_review where a human picks the visual manually.
+const MEME_PEOPLE_PATTERN = /\b(person|people|man|men|woman|women|girl|boy|guy|face|selfie|crowd|portrait|dog|cat|puppy|kitten|pet)\b/i;
 const UGC_NEGATIVE = [
   "handshake",
   "boardroom",
@@ -324,19 +331,26 @@ export type FilterResult = { kept: VisualCandidate[]; rejected: number };
 
 /**
  * Remove clearly unsuitable candidates: missing URL, too small, unusable dimensions.
+ * Meme bases additionally drop any people/animal imagery (scenic backgrounds only).
  * Orientation is enforced softly — if any candidate matches the desired orientation,
  * the mismatched ones are dropped (never select the wrong orientation when a suitable
  * alternative exists); if none match, they are kept and left to ranking.
  */
 export function filterCandidates(candidates: VisualCandidate[], meta: VisualQueryMeta): FilterResult {
   const desired = desiredOrientation(meta);
+  const isMeme = String(meta.contentFormat ?? "").toLowerCase() === "meme";
   let usable = candidates.filter((c) => {
     if (!c.previewUrl) return false;
     if (!c.width || !c.height) return false;
     if (Math.min(c.width, c.height) < MIN_SHORT_SIDE) return false;
     return true;
   });
-  const rejectedBySize = candidates.length - usable.length;
+  let rejectedBySize = candidates.length - usable.length;
+  if (isMeme) {
+    const before = usable.length;
+    usable = usable.filter((c) => !MEME_PEOPLE_PATTERN.test(`${c.altText} ${c.tags.join(" ")}`));
+    rejectedBySize += before - usable.length;
+  }
 
   const matchingOrientation = usable.filter((c) => c.orientation === desired);
   if (matchingOrientation.length > 0) {

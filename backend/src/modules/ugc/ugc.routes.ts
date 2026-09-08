@@ -18,7 +18,7 @@ import {
   DEFAULT_TARGET_COUNT,
   UgcError,
   countGeneratedContent,
-  generateInitialBrandContent,
+  generateMemeBrandContent,
   getGenerationJobStatus,
   isStaleJob,
   listGeneratedContent,
@@ -88,8 +88,8 @@ export async function ugcRoutes(app: FastifyInstance) {
 
   // -------------------------------------------------------------------------
   // POST generate — manual (re)run of the same background job Brand Intelligence
-  // triggers automatically. Returns 202 immediately; the run is decoupled from this
-  // request and resumes from what is already saved, so it can never duplicate content.
+  // triggers automatically (Meme Engine: wipe-and-regenerate the meme set).
+  // Returns 202 immediately; the run is decoupled from this request.
   // -------------------------------------------------------------------------
   r.post(
     `${base}/generate`,
@@ -119,8 +119,8 @@ export async function ugcRoutes(app: FastifyInstance) {
         return reply.status(202).send({ status: "processing", companyId, targetCount, savedCount });
       }
 
-      void generateInitialBrandContent({ companyId, userId, targetCount }).catch((e: any) => {
-        request.log.warn({ err: e }, "content generation failed");
+      void generateMemeBrandContent({ companyId, userId }).catch((e: any) => {
+        request.log.warn({ err: e }, "meme content generation failed");
       });
 
       return reply.status(202).send({ status: "pending", companyId, targetCount, savedCount });

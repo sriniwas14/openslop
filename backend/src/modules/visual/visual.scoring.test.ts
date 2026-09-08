@@ -168,6 +168,104 @@ describe("refineVisualQueries", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Meme base visuals — scenic, people-free Layer-1 backgrounds
+// ---------------------------------------------------------------------------
+
+const MEME_META: VisualQueryMeta = {
+  visualTags: ["misty mountain", "soft light"],
+  visualMood: "Disbelief",
+  visualStyle: "lifestyle",
+  visualCategory: "outdoor",
+  visualOrientation: "portrait",
+  platform: "instagram",
+  contentFormat: "meme",
+  contentType: "relatable_situation",
+};
+
+describe("meme visual queries", () => {
+  it("uses only the scenic background pool — never the joke tags or people words", () => {
+    const jokeMeta: VisualQueryMeta = {
+      ...MEME_META,
+      visualTags: ["pov", "funny", "group management", "smug", "workaround"],
+    };
+    const q = buildVisualQueries(jokeMeta);
+    expect(q.length).toBeGreaterThanOrEqual(2);
+    expect(q.length).toBeLessThanOrEqual(3);
+    const joined = q.join(" | ").toLowerCase();
+    for (const banned of ["pov", "funny", "smug", "workaround", "person", "people", "selfie"]) {
+      expect(joined).not.toContain(banned);
+    }
+  });
+
+  it("is deterministic for identical metadata and cycles distinct pool entries", () => {
+    const a = buildVisualQueries(MEME_META);
+    const b = buildVisualQueries(MEME_META);
+    expect(a).toEqual(b);
+    expect(new Set(a.map((x) => x.toLowerCase())).size).toBe(a.length);
+  });
+
+  it("keeps every query concise", () => {
+    for (const q of buildVisualQueries(MEME_META)) {
+      expect(q.split(/\s+/).filter(Boolean).length).toBeLessThanOrEqual(6);
+    }
+  });
+
+  it("refines from the pool without repeating tried queries", () => {
+    const first = buildVisualQueries(MEME_META);
+    const refined = refineVisualQueries(MEME_META, first);
+    expect(refined.length).toBeGreaterThan(0);
+    const tried = new Set(first.map((q) => q.toLowerCase()));
+    for (const q of refined) expect(tried.has(q.toLowerCase())).toBe(false);
+  });
+});
+
+describe("meme candidate filtering + selection", () => {
+  it("drops people and animal imagery for memes even when tags match", () => {
+    const people = candidate({ altText: "portrait of a man smiling at the camera", tags: ["man", "smile"] });
+    const dog = candidate({ altText: "a golden retriever sitting on grass", tags: ["dog", "pet"] });
+    const scenic = candidate({ altText: "misty mountain landscape in soft light", tags: ["mountain", "landscape"] });
+    const { kept } = filterCandidates([people, dog, scenic], MEME_META);
+    expect(kept.map((c) => c.sourceAssetId)).toEqual([scenic.sourceAssetId]);
+  });
+
+  it("does not apply the people filter to non-meme formats", () => {
+    const people = candidate({ altText: "portrait of a man speaking to camera" });
+    const { kept } = filterCandidates([people], META); // talking_head fixture
+    expect(kept).toHaveLength(1);
+  });
+
+  it("selects a scenic base that clears the threshold under meme metadata", () => {
+    const scenic = candidate({
+      altText: "misty mountain landscape in soft light at dawn",
+      tags: ["mountain", "landscape", "misty"],
+    });
+    const best = selectBestVisual([scenic], MEME_META, buildVisualQueries(MEME_META));
+    expect(best).not.toBeNull();
+    expect(best!.score).toBeGreaterThanOrEqual(MIN_RELEVANCE_THRESHOLD);
+  });
+
+  it("never selects a person photo for a meme even with strong tag overlap", () => {
+    const person = candidate({
+      altText: "a man tapping his temple, surprised expression on his face",
+      tags: ["mountain", "misty", "soft", "light"],
+    });
+    const scenic = candidate({
+      altText: "misty mountain landscape in soft light at dawn",
+      tags: ["mountain", "landscape", "misty"],
+    });
+    const best = selectBestVisual([person, scenic], MEME_META, buildVisualQueries(MEME_META));
+    expect(best).not.toBeNull();
+    expect(best!.candidate.sourceAssetId).toBe(scenic.sourceAssetId);
+  });
+
+  it("rewards scenic candidates via the meme format layer", () => {
+    const scenic = candidate({ altText: "modern city buildings against the sky", tags: ["city", "architecture"] });
+    const res = new VisualCandidateScorer().score(scenic, MEME_META, ["modern city buildings looking up"]);
+    expect(res.breakdown.formatMatch).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Orientation preference — spec: portrait for short-form, portrait/square for LinkedIn
 // ---------------------------------------------------------------------------
 

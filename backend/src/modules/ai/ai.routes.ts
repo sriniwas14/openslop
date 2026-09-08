@@ -277,6 +277,8 @@ export async function aiRoutes(app: FastifyInstance) {
           userId: request.session!.user.id,
           provider: body.provider,
           apiKey: body.apiKey || null,
+          accessKey: body.accessKey || null,
+          secretKey: body.secretKey || null,
           serviceAccountJson: body.serviceAccountJson || null,
           baseUrl: body.baseUrl || null,
           projectId: body.projectId || null,
@@ -302,6 +304,8 @@ export async function aiRoutes(app: FastifyInstance) {
       const patch: any = { updatedAt: new Date().toISOString() };
       if (body.provider !== undefined) patch.provider = body.provider;
       if (body.apiKey !== undefined) patch.apiKey = body.apiKey || null;
+      if (body.accessKey !== undefined) patch.accessKey = body.accessKey || null;
+      if (body.secretKey !== undefined) patch.secretKey = body.secretKey || null;
       if (body.serviceAccountJson !== undefined) patch.serviceAccountJson = body.serviceAccountJson || null;
       if (body.baseUrl !== undefined) patch.baseUrl = body.baseUrl || null;
       if (body.projectId !== undefined) patch.projectId = body.projectId || null;

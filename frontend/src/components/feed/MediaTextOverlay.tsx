@@ -40,6 +40,11 @@ export type OverlayBlock = {
   backgroundColor: string
   color: string
   bold: boolean
+  /** Explicit numeric weight override (e.g. meme Layer 2 = 700). Defaults to bold ? 800 : 500. */
+  fontWeight?: number
+  /** Layer-type preset id applied in the editor (funny/relatable/…) — layout-only,
+      saved with the block snapshot. Absent = custom positioning. */
+  layerType?: string
 }
 
 // Reusable primary hook text for the overlay — prefers hook, then body, then
@@ -92,16 +97,29 @@ export function overlayBlocksForContent(content: GeneratedContentDoc): OverlayBl
   }
 
   const hook = content.hook
-  const body = content.body
   const preset = compositionForFormat(content.contentFormat)
-  const size = preset.size ?? 0.069
+  const size = preset.size ?? 0.055
 
   switch (content.contentFormat) {
-    case 'meme':
-      // meme keeps the setup/punchline split: top setup + bottom punchline
-      push(hook, MEME_COMPOSITION.setup.x, MEME_COMPOSITION.setup.y, MEME_COMPOSITION.setup.size)
-      push(body, MEME_COMPOSITION.punchline.x, MEME_COMPOSITION.punchline.y, MEME_COMPOSITION.punchline.size)
+    case 'meme': {
+      // Layer 2 of the 3-layer meme composition: the overlay text only
+      // (onScreenText, falling back to hook). White / 700 / top 20% /
+      // centered / ~80% width per MEME_COMPOSITION. The feed never shows a
+      // second description layer.
+      const overlay = (content.onScreenText ?? []).map((t) => (t ?? '').trim()).filter(Boolean)[0]
+        ?? (hook ?? '').trim()
+      const m = push(
+        overlay,
+        MEME_COMPOSITION.setup.x,
+        MEME_COMPOSITION.setup.y,
+        MEME_COMPOSITION.setup.size,
+        MEME_COMPOSITION.setup.maxWidthPct,
+      )
+      // Spec weight is bold/700 (not the 800 headline default).
+      m.bold = false
+      ;(m as OverlayBlock & { fontWeight?: number }).fontWeight = 700
       break
+    }
     default:
       // every format: single text-only block at that format's composed
       // position. Positioning and background are independent concerns.
@@ -354,15 +372,15 @@ function OverlayBlockView({
       fontSizePct: block.size,
       position: { x: block.x / 100, y: block.y / 100 },
       // Per-format composed width (strip layouts get a wider, thinner block).
-      maxWidthPct: block.maxWidthPct ?? 0.70,
+      maxWidthPct: block.maxWidthPct ?? 0.80,
       textColor: block.color,
-      fontWeight: block.bold ? 800 : 500,
+      fontWeight: block.fontWeight ?? (block.bold ? 800 : 500),
     }
     // Chips need breathing room between lines; the wrapping engine uses this
     // for its shrink-to-fit height check as well.
     if (bgOn) c.lineHeight = HIGHLIGHT.lineHeight
     return c
-  }, [block.size, block.x, block.y, block.maxWidthPct, block.color, block.bold, bgOn])
+  }, [block.size, block.x, block.y, block.maxWidthPct, block.color, block.bold, block.fontWeight, bgOn])
 
   // The layout engine is shared with backend export (estimate-based wrapping),
   // so the browser preview wraps identically to the rendered output — no
@@ -482,7 +500,10 @@ function OverlayBlockView({
             {line}
           </span>
         ) : (
-          <span key={i} className="block">
+          // nowrap locks the engine-split lines: the browser must never
+          // re-wrap a line (which would strand a short second line that the
+          // engine already balanced to fill the available width).
+          <span key={i} className="block" style={{ whiteSpace: 'nowrap' }}>
             {line}
           </span>
         ),

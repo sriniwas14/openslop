@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import MediaTextOverlay, { type OverlayBlock } from '@/components/feed/MediaTextOverlay'
+import MemeGifOverlay, { DEFAULT_MEME_GIF_LAYER, type MemeGifLayer } from '@/components/feed/MemeGifOverlay'
 import OverlayEditorPanel, { type DraftMediaKind } from '@/components/feed/OverlayEditorPanel'
 import { formatLabel } from '@/components/feed/data'
 import type { GeneratedContentDoc } from '@/services/visual'
@@ -39,9 +40,11 @@ type Props = {
   initialMediaKind: DraftMediaKind | null
   /** Layer that was tapped to open the popup — pre-selected in the draft. */
   initialSelectedId: string | null
+  /** Layer 3 meme GIF position (only used when content is a meme). */
+  initialGifLayer?: MemeGifLayer
   /** Content-fitted viewport aspect (w/h) measured by the feed card. */
   mediaAspect?: number | null
-  onApply: (blocks: OverlayBlock[], imageOverride: string | null, mediaKind: DraftMediaKind) => void
+  onApply: (blocks: OverlayBlock[], imageOverride: string | null, mediaKind: DraftMediaKind, gifLayer?: MemeGifLayer) => void
 }
 
 export default function OverlayEditorDialog({
@@ -55,11 +58,14 @@ export default function OverlayEditorDialog({
   initialImageOverride,
   initialMediaKind,
   initialSelectedId,
+  initialGifLayer,
   mediaAspect,
   onApply,
 }: Props) {
   const [draftBlocks, setDraftBlocks] = useState<OverlayBlock[]>(initialBlocks)
   const [draftSelectedId, setDraftSelectedId] = useState<string | null>(null)
+  const [draftGif, setDraftGif] = useState<MemeGifLayer>(initialGifLayer ?? DEFAULT_MEME_GIF_LAYER)
+  const [draftGifSelected, setDraftGifSelected] = useState(false)
   const [draftMedia, setDraftMedia] = useState<string | null>(initialImageOverride)
   const [draftKind, setDraftKind] = useState<DraftMediaKind | null>(initialMediaKind)
   const [previewSize, setPreviewSize] = useState<{ width: number; height: number } | null>(null)
@@ -73,6 +79,8 @@ export default function OverlayEditorDialog({
     if (open) {
       setDraftBlocks(initialBlocks)
       setDraftSelectedId(initialSelectedId)
+      setDraftGif(initialGifLayer ?? DEFAULT_MEME_GIF_LAYER)
+      setDraftGifSelected(false)
       setDraftMedia(initialImageOverride)
       setDraftKind(initialMediaKind)
       createdUrlsRef.current = []
@@ -153,14 +161,15 @@ export default function OverlayEditorDialog({
       if (url !== applied && url !== initialImageOverride) URL.revokeObjectURL(url)
     }
     createdUrlsRef.current = []
-    onApply(draftBlocks, applied, draftKind ?? (isVideo ? 'video' : 'image'))
+    onApply(draftBlocks, applied, draftKind ?? (isVideo ? 'video' : 'image'), draftGif)
     onOpenChange(false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftBlocks, draftMedia, draftKind, isVideo, initialImageOverride, onApply, onOpenChange])
+  }, [draftBlocks, draftMedia, draftKind, draftGif, isVideo, initialImageOverride, onApply, onOpenChange])
 
   const effectiveSrc = draftMedia ?? visualSrc
   const effectiveKind: DraftMediaKind = draftKind ?? (isVideo ? 'video' : 'image')
   const showVideo = effectiveKind === 'video' && !!effectiveSrc
+  const isMeme = content.contentFormat === 'meme'
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && closeWithoutApply()}>
@@ -196,8 +205,28 @@ export default function OverlayEditorDialog({
               <MediaTextOverlay
                 blocks={draftBlocks}
                 selectedId={draftSelectedId}
-                onSelect={setDraftSelectedId}
+                onSelect={(id) => {
+                  setDraftSelectedId(id)
+                  if (id) setDraftGifSelected(false)
+                }}
                 onPatch={patchDraft}
+              />
+            )}
+            {/* Layer 3: meme GIF overlay — draggable in the editor, same
+                composition coordinate system as the feed card. */}
+            {isMeme && effectiveSrc && (
+              <MemeGifOverlay
+                src={content.memeUrl}
+                alt={content.memeName ?? content.hook ?? 'Meme overlay'}
+                layer={draftGif}
+                draggable
+                selected={draftGifSelected}
+                onSelect={setDraftGifSelected}
+                onPatch={(p) => {
+                  setDraftGif((prev) => ({ ...prev, ...p }))
+                  setDraftGifSelected(true)
+                  setDraftSelectedId(null)
+                }}
               />
             )}
           </div>
@@ -216,6 +245,17 @@ export default function OverlayEditorDialog({
             onRemove={removeDraft}
             onUploadMedia={uploadMedia}
             onRevertImage={revertImage}
+            gifLayer={isMeme ? draftGif : null}
+            gifSelected={draftGifSelected}
+            onSelectGif={() => {
+              setDraftGifSelected(true)
+              setDraftSelectedId(null)
+            }}
+            onPatchGif={(p) => {
+              setDraftGif((prev) => ({ ...prev, ...p }))
+              setDraftGifSelected(true)
+              setDraftSelectedId(null)
+            }}
           />
         </div>
 

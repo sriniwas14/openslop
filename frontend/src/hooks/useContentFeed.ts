@@ -21,14 +21,20 @@ import {
 //
 // Visuals are prepared server-side in the background, so a batch that is still `pending`
 // is re-polled on the SAME cursor (idempotent — it never re-triggers work) until every
-// post in it has resolved to matched / needs_review / failed.
+// post in it has resolved to matched / needs_review / failed. Polls back off per cursor
+// (2.5s → 30s cap) and stop after MAX_POLLS_PER_CURSOR — a stuck batch keeps its
+// "Preparing…" indicator instead of polling forever.
 // ---------------------------------------------------------------------------
 
 const START_KEY = 'start'
 /** How many posts before the end of what is loaded trigger the next batch (item 3 of 5). */
 const PREFETCH_AHEAD = 3
-/** Poll interval for batches whose visuals are still being prepared. */
+/** Base poll interval for batches whose visuals are still being prepared. */
 const POLL_INTERVAL_MS = 2500
+/** Upper bound for the per-cursor poll backoff. */
+const POLL_MAX_DELAY_MS = 30000
+/** Give up polling one cursor after this many polls (~10 min with backoff). */
+const MAX_POLLS_PER_CURSOR = 24
 
 type Daily = { dailyLimit: number; preparedToday: number; remainingToday: number }
 
@@ -71,12 +77,17 @@ export function useContentFeed(companyId: string | null): ContentFeedState {
   // mutable guards — refs so a re-render or a rapid scroll can never queue a duplicate
   const inFlight = useRef<Set<string>>(new Set())
   const fetched = useRef<Set<string>>(new Set())
+  // per-cursor poll backoff state — counts reset once the batch resolves
+  const pollCount = useRef<Record<string, number>>({})
+  const lastPollAt = useRef<Record<string, number>>({})
   const companyRef = useRef<string | null>(companyId)
   companyRef.current = companyId
 
   const reset = useCallback(() => {
     inFlight.current.clear()
     fetched.current.clear()
+    pollCount.current = {}
+    lastPollAt.current = {}
     setChain([])
     setBatches({})
     setActiveIndex(0)
@@ -124,9 +135,12 @@ export function useContentFeed(companyId: string | null): ContentFeedState {
     [],
   )
 
-  // first batch — the only load the reader ever waits for
+  // first batch — the only load the reader ever waits for.
+  // The fetched guard stops StrictMode remounts from loading `start` twice;
+  // reset() clears it, so company switches and reload() still refetch.
   useEffect(() => {
     if (!companyId) return
+    if (fetched.current.has(START_KEY)) return
     void loadBatch(START_KEY, null, 'initial')
   }, [companyId, nonce, loadBatch])
 
@@ -151,18 +165,22 @@ export function useContentFeed(companyId: string | null): ContentFeedState {
   // -------------------------------------------------------------------------
   // Background prefetch — start the next batch while the reader is still 3 posts
   // from the end of what is loaded, so it is ready before they arrive.
+  // The appending check makes one scroll gesture queue exactly one request —
+  // observer jitter while a batch is in flight is a no-op.
   // -------------------------------------------------------------------------
   useEffect(() => {
     if (!hasMore || dailyComplete) return
     if (items.length === 0) return
+    if (appending) return
     if (activeIndex < items.length - PREFETCH_AHEAD) return
     loadMore()
-  }, [activeIndex, items.length, hasMore, dailyComplete, loadMore])
+  }, [activeIndex, items.length, hasMore, dailyComplete, appending, loadMore])
 
   // -------------------------------------------------------------------------
   // Polling — a loaded batch whose visuals are still being prepared is re-read on
-  // the same cursor until every post resolves. Runs only while something is pending,
-  // never touches the scroll position, and stops on its own.
+  // the same cursor until every post resolves. Backs off per cursor (2.5s → 30s),
+  // pauses while the tab is hidden, and gives up after MAX_POLLS_PER_CURSOR so a
+  // stuck batch never polls forever. Never touches the scroll position.
   // -------------------------------------------------------------------------
   const pendingKeys = useMemo(
     () => chain.filter((k) => (batches[k]?.items ?? []).some((it) => isVisualPending(it.visualStatus))),
@@ -170,12 +188,31 @@ export function useContentFeed(companyId: string | null): ContentFeedState {
   )
   const preparing = pendingKeys.length > 0
 
+  // a resolved batch starts fresh if it ever pends again
+  useEffect(() => {
+    const pending = new Set(pendingKeys)
+    for (const k of Object.keys(pollCount.current)) {
+      if (!pending.has(k)) {
+        delete pollCount.current[k]
+        delete lastPollAt.current[k]
+      }
+    }
+  }, [pendingKeys])
+
   useEffect(() => {
     if (!companyId || pendingKeys.length === 0) return
     let cancelled = false
     const timer = setInterval(() => {
       if (cancelled) return
+      if (document.hidden) return
+      const now = Date.now()
       for (const key of pendingKeys) {
+        const attempt = pollCount.current[key] ?? 0
+        if (attempt >= MAX_POLLS_PER_CURSOR) continue
+        const wait = Math.min(POLL_INTERVAL_MS * 2 ** attempt, POLL_MAX_DELAY_MS)
+        if (now - (lastPollAt.current[key] ?? 0) < wait) continue
+        pollCount.current[key] = attempt + 1
+        lastPollAt.current[key] = now
         // the cursor stored on the batch that PRECEDES this one produced it; re-request
         // with this batch's own key so the server returns the same page (idempotent)
         const cursor = key === START_KEY ? null : key
@@ -192,8 +229,15 @@ export function useContentFeed(companyId: string | null): ContentFeedState {
     setError(null)
     if (!companyId) return
     // retry whichever batch failed: the next one if we have a cursor, else the first
-    if (hasMore && nextCursor && !fetched.current.has(nextCursor)) void loadBatch(nextCursor, nextCursor, 'next')
-    else void loadBatch(START_KEY, null, 'initial')
+    if (hasMore && nextCursor && !fetched.current.has(nextCursor)) {
+      delete pollCount.current[nextCursor]
+      delete lastPollAt.current[nextCursor]
+      void loadBatch(nextCursor, nextCursor, 'next')
+    } else {
+      delete pollCount.current[START_KEY]
+      delete lastPollAt.current[START_KEY]
+      void loadBatch(START_KEY, null, 'initial')
+    }
   }, [companyId, hasMore, nextCursor, loadBatch])
 
   const reload = useCallback(() => {
