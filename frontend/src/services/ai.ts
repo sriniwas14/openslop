@@ -1,5 +1,5 @@
-export type AiProvider = "openai" | "anthropic" | "google" | "vertex" | "xai" | "openrouter" | "runway" | "fal" | "luma" | "ollama" | "custom"
-export const AI_PROVIDERS: AiProvider[] = ["openai","anthropic","google","vertex","xai","openrouter","runway","fal","luma","ollama","custom"]
+export type AiProvider = "openai" | "anthropic" | "google" | "vertex" | "xai" | "openrouter" | "runway" | "fal" | "luma" | "kling" | "ollama" | "custom"
+export const AI_PROVIDERS: AiProvider[] = ["openai","anthropic","google","vertex","xai","openrouter","runway","fal","luma","kling","ollama","custom"]
 export const AI_PROVIDER_LABELS: Record<AiProvider, string> = {
   openai: 'OpenAI',
   anthropic: 'Anthropic',
@@ -10,6 +10,7 @@ export const AI_PROVIDER_LABELS: Record<AiProvider, string> = {
   runway: 'Runway',
   fal: 'fal.ai',
   luma: 'Luma',
+  kling: 'Kling AI',
   ollama: 'Ollama',
   custom: 'Custom OpenAI-compatible',
 }
@@ -19,6 +20,8 @@ export type AiConfig = {
   userId: string
   provider: string
   apiKeyMasked: string | null
+  accessKeyMasked: string | null
+  secretKeyMasked: string | null
   serviceAccountConfigured: boolean
   baseUrl: string | null
   projectId: string | null
@@ -43,7 +46,7 @@ export function listAiConfigs(): Promise<AiConfig[]> {
   return fetch('/ai/configs', { credentials: 'include' }).then(handle<AiConfig[]>)
 }
 
-export function createAiConfig(body: { provider: AiProvider; apiKey?: string; serviceAccountJson?: string; baseUrl?: string; projectId?: string; location?: string; model?: string; configId?: string; name?: string; isDefault?: boolean }): Promise<AiConfig> {
+export function createAiConfig(body: { provider: AiProvider; apiKey?: string; accessKey?: string; secretKey?: string; serviceAccountJson?: string; baseUrl?: string; projectId?: string; location?: string; model?: string; configId?: string; name?: string; isDefault?: boolean }): Promise<AiConfig> {
   return fetch('/ai/configs', {
     method: 'POST',
     credentials: 'include',
@@ -52,7 +55,7 @@ export function createAiConfig(body: { provider: AiProvider; apiKey?: string; se
   }).then(handle<AiConfig>)
 }
 
-export function updateAiConfig(id: string, body: Partial<{ provider: AiProvider; apiKey: string; serviceAccountJson: string; baseUrl: string; projectId: string; location: string; model: string; configId: string; name: string; isDefault: boolean }>): Promise<AiConfig> {
+export function updateAiConfig(id: string, body: Partial<{ provider: AiProvider; apiKey: string; accessKey: string; secretKey: string; serviceAccountJson: string; baseUrl: string; projectId: string; location: string; model: string; configId: string; name: string; isDefault: boolean }>): Promise<AiConfig> {
   return fetch(`/ai/configs/${id}`, {
     method: 'PATCH',
     credentials: 'include',

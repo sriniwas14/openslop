@@ -27,13 +27,7 @@ async function ensureTable() {
   } catch { }
 }
 
-// ponytail: hidden facial variance for Regenerate — seed param if reproducibility needed
-const FACE_VARIANCE = [
-  'soft jawline','defined jawline','high cheekbones','oval face',
-  'subtle freckles','heart-shaped face','straight nose','soft smile lines'
-] as const
-
-export function buildPrompt(attrs: any, custom?: string, nonce?: string, variant?: string) {
+export function buildPrompt(attrs: any, custom?: string) {
   if (custom?.trim()) return custom.trim().slice(0, 5000);
   const parts = [
     "photorealistic portrait",
@@ -47,9 +41,8 @@ export function buildPrompt(attrs: any, custom?: string, nonce?: string, variant
     attrs.vibe ? `${attrs.vibe} vibe` : "",
     attrs.pose ? `${attrs.pose} pose` : "",
   ].filter(Boolean).join(", ");
-  const tail = [nonce ? `variation ${nonce}` : '', variant ? `natural facial variation: ${variant}` : ''].filter(Boolean).join(", ");
   // ponytail: style prompt forbids studio lighting — tail dropped, style + attrs only
-  return `${INFLUENCER_SYSTEM_PROMPT}\n${parts}${tail ? `, ${tail}` : ''}`.slice(0, 5000);
+  return `${INFLUENCER_SYSTEM_PROMPT}\n${parts}`.slice(0, 5000);
 }
 
 async function assertCompany(request: any, companyId: string) {
@@ -113,9 +106,7 @@ export async function influencerRoutes(app: FastifyInstance) {
       return reply.status(404).send({ error: "Company not found" } as any);
     }
     request.log.info({ companyId: request.params.companyId, companyName: (company as any).name, userId: (request.session as any)?.user?.id }, "influencer preview: company ok");
-    const nonce = !body.prompt?.trim() ? crypto.randomUUID().slice(0, 6) : undefined
-    const variant = !body.prompt?.trim() ? FACE_VARIANCE[Math.floor(Math.random() * FACE_VARIANCE.length)] : undefined
-    const prompt = buildPrompt(body.attributes || {}, body.prompt, nonce, variant);
+    const prompt = buildPrompt(body.attributes || {}, body.prompt);
     request.log.info({ promptLen: prompt.length, promptPreview: prompt.slice(0, 300) }, "influencer preview: prompt built");
     let job: any = null;
     try {
@@ -126,7 +117,7 @@ export async function influencerRoutes(app: FastifyInstance) {
         contentId: null,
         task: "image",
         prompt,
-        format: "horizontal" as any,
+        format: "vertical" as any,
       });
       request.log.info({ jobId: job.id, configId: (job as any).configId, provider: (job as any).provider, model: (job as any).model, status: (job as any).status }, "influencer preview: job created");
       // poll until done — 1s ticks: OpenRouter image models can take 60-90s

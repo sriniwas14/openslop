@@ -61,22 +61,57 @@
     {
       "idx": 8,
       "version": "6",
-      "when": 1788260000000,
-      "tag": "0008_brand_intelligence",
+      "when": 1788261000000,
+      "tag": "0008_content_templates",
       "breakpoints": true
     },
     {
       "idx": 9,
       "version": "6",
-      "when": 1788270000000,
-      "tag": "0009_generated_content",
+      "when": 1788262000000,
+      "tag": "0009_template_duration_structure",
       "breakpoints": true
     },
     {
       "idx": 10,
       "version": "6",
+      "when": 1788263000000,
+      "tag": "0010_template_style",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1788361000000,
+      "tag": "0011_content_template_fk",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1788362000000,
+      "tag": "0012_ai_config_kling_auth",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1788260000000,
+      "tag": "0013_brand_intelligence",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1788270000000,
+      "tag": "0014_generated_content",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
       "when": 1788360000000,
-      "tag": "0010_visual_discovery",
+      "tag": "0015_visual_discovery",
       "breakpoints": true
     }
   ]

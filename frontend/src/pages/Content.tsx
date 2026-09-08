@@ -37,6 +37,7 @@ function toContentItem(row: ContentRow): ContentItem {
     format: row.format ?? (row.kind === 'carousel' ? 'horizontal' : 'vertical'),
     mediaUrl: row.mediaUrl,
     duration: row.duration ?? (row.kind === 'carousel' ? null : 15),
+    templateId: row.templateId ?? null,
   }
 }
 

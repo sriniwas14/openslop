@@ -3,11 +3,11 @@ import { z } from "zod";
 import { and, desc, eq } from "drizzle-orm";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { db } from "../../lib/db";
-import { companies, contents, influencers } from "../../db/schema";
+import { companies, contents, contentTemplates, influencers } from "../../db/schema";
 import { requireSession } from "../../plugins/auth";
 import { resolveUserModel } from "../company/company.workflow";
 import { queueContentMedia } from "../media/media.service";
-import { renderVideoForContent } from "../media/video.workflow";
+import { getRenderStatus, startBackgroundRender } from "../media/video.workflow";
 import {
   carouselImageSchema,
   companyIdParamsSchema,
@@ -47,6 +47,25 @@ async function assertCompany(request: any, companyId: string) {
   return row ?? null;
 }
 
+// ponytail: lazy migrate — existing DBs predate template_id
+async function ensureContentColumns() {
+  try { await db.run(`ALTER TABLE content ADD COLUMN template_id TEXT` as any); } catch {}
+}
+
+async function lookupTemplate(templateId?: string | null) {
+  if (!templateId) return null;
+  try {
+    const [t] = await db.select().from(contentTemplates).where(eq(contentTemplates.id, templateId));
+    return t ?? null;
+  } catch (e: any) {
+    if (String(e?.message ?? "").includes("no such table")) {
+      await db.run(`CREATE TABLE IF NOT EXISTS content_template (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, prompt TEXT NOT NULL, preview_image TEXT NOT NULL, duration TEXT NOT NULL DEFAULT '15', structure TEXT, style TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)` as any);
+      return null;
+    }
+    throw e;
+  }
+}
+
 // body without companyId – company comes from URL (ponytail: single source of truth)
 // note: can't use .omit on refined schema (zod v4 throws) — rebuild from base fields
 const createContentBodySchema = z
@@ -59,6 +78,7 @@ const createContentBodySchema = z
     format: z.enum(["vertical", "horizontal"]).optional(),
     duration: z.number().int().refine((v) => [15, 30, 45].includes(v), { message: "duration must be 15, 30 or 45" }).optional(),
     influencerId: z.string().min(1).optional(),
+    templateId: z.string().min(1).optional(),
     scheduledAt: z.string().datetime({ offset: true }).nullable().optional(),
   })
   .superRefine((v: any, ctx: any) => {
@@ -158,6 +178,13 @@ export async function contentRoutes(app: FastifyInstance) {
       const full = { ...(request.body as any), companyId: request.params.companyId };
       const parsed = createContentSchema.safeParse(full);
       if (!parsed.success) return reply.status(400).send({ error: parsed.error.issues[0]?.message ?? "validation failed" } as any);
+      // template drives duration — single source of truth for N=duration/5 chunks
+      if ((parsed.data as any).templateId) {
+        const t = await lookupTemplate((parsed.data as any).templateId);
+        if (!t) return reply.status(400).send({ error: "template not found" } as any);
+        const td = Number((t as any).duration ?? 15);
+        if ([15, 30, 45].includes(td)) (parsed.data as any).duration = td;
+      }
       // influencer required for talkinghead
       let influencerDataUri: string | null = null;
       if ((parsed.data as any).influencerId) {
@@ -165,6 +192,7 @@ export async function contentRoutes(app: FastifyInstance) {
         if (!influencerDataUri) return reply.status(400).send({ error: "influencer not found or image unavailable" } as any);
       }
       const data = serializeContentInput(parsed.data);
+      await ensureContentColumns();
       const [row] = await db
         .insert(contents)
         .values({
@@ -179,11 +207,16 @@ export async function contentRoutes(app: FastifyInstance) {
           format: data.format as any,
           duration: (data as any).duration as any,
           influencerId: (data as any).influencerId as any,
+          templateId: (data as any).templateId as any,
           scheduledAt: data.scheduledAt as any,
         } as any)
         .returning();
       const parsedRow = parseContentRow(row as any) as any;
-      void queueContentMedia({ userId: request.session!.user.id, companyId: request.params.companyId, contentId: row.id, kind: row.kind, images: parsedRow.images, scripts: parsedRow.scripts, format: row.format as any, influencerImageUrl: influencerDataUri });
+      // ponytail: images auto-render; video renders explicitly via POST /contents/:id/render
+      // so the final screen can offer Render-in-background vs Dismiss without a 5s race
+      if (row.kind === "carousel") {
+        void queueContentMedia({ userId: request.session!.user.id, companyId: request.params.companyId, contentId: row.id, kind: row.kind, images: parsedRow.images, scripts: parsedRow.scripts, format: row.format as any, influencerImageUrl: influencerDataUri });
+      }
       return reply.status(201).send(parsedRow);
     },
   );
@@ -245,11 +278,13 @@ export async function contentRoutes(app: FastifyInstance) {
         format: patch.format !== undefined ? patch.format : existingParsed.format,
         duration: patch.duration !== undefined ? patch.duration : (existingParsed as any).duration,
         influencerId: patch.influencerId !== undefined ? patch.influencerId : (existingParsed as any).influencerId,
+        templateId: patch.templateId !== undefined ? patch.templateId : (existingParsed as any).templateId,
         scheduledAt: patch.scheduledAt !== undefined ? patch.scheduledAt : (existing as any).scheduledAt,
       };
       if (merged.scheduledAt === null) merged.scheduledAt = null;
       if (merged.duration === null) delete merged.duration;
       if (merged.influencerId === null) delete merged.influencerId;
+      if ((merged as any).templateId === null) delete (merged as any).templateId;
       // normalize nulls to undefined for zod
       if (merged.images === null) delete merged.images;
       if (merged.scripts === null) delete merged.scripts;
@@ -266,6 +301,7 @@ export async function contentRoutes(app: FastifyInstance) {
       if (patch.format !== undefined) serialized.format = patch.format;
       if (patch.duration !== undefined) serialized.duration = String(patch.duration);
       if (patch.influencerId !== undefined) serialized.influencerId = patch.influencerId ?? null;
+      if (patch.templateId !== undefined) { await ensureContentColumns(); serialized.templateId = patch.templateId ?? null; }
       if (patch.images !== undefined) serialized.images = patch.images ? JSON.stringify(patch.images) : null;
       if (patch.scripts !== undefined) serialized.scripts = patch.scripts ? JSON.stringify(patch.scripts) : null;
       if (patch.scheduledAt !== undefined) serialized.scheduledAt = patch.scheduledAt ? new Date(patch.scheduledAt).toISOString() : null;
@@ -300,14 +336,26 @@ export async function contentRoutes(app: FastifyInstance) {
     },
   );
 
-  // ---------- render video from content row ----------
+  // ---------- render video from content row (background; poll status) ----------
+  const renderStatusSchema = z.object({
+    contentId: z.string(),
+    status: z.enum(["queued", "rendering", "completed", "failed"]),
+    total: z.number().int(),
+    done: z.number().int(),
+    expectedSeconds: z.number(),
+    actualSeconds: z.number().nullable(),
+    mediaUrl: z.string().nullable(),
+    error: z.string().nullable(),
+  });
+
   r.post(
     "/contents/:id/render",
     {
       preHandler: requireSession,
       schema: {
         params: contentIdParamsSchema,
-        response: { 200: contentResponseSchema, 400: errorResponseSchema, 404: errorResponseSchema, 502: errorResponseSchema },
+        body: z.object({ templateId: z.string().min(1).optional() }).optional(),
+        response: { 202: renderStatusSchema, 400: errorResponseSchema, 404: errorResponseSchema, 502: errorResponseSchema },
       },
     },
     async (request, reply) => {
@@ -317,18 +365,60 @@ export async function contentRoutes(app: FastifyInstance) {
       const [row] = await db.select().from(contents).where(and(eq(contents.id, id), eq(contents.userId, userId)));
       if (!row) return reply.status(404).send({ error: "Not found" } as any);
       if (row.kind === "carousel") return reply.status(400).send({ error: "video not available for carousel" } as any);
+      // template vibe can be (re)attached at render time — drives duration on re-render
+      const tplId = (request.body as any)?.templateId ?? (row as any).templateId ?? (row as any).template_id ?? null;
+      if (tplId) {
+        const t = await lookupTemplate(tplId);
+        if (!t) return reply.status(400).send({ error: "template not found" } as any);
+        const td = Number((t as any).duration ?? 15);
+        await ensureContentColumns();
+        await db.update(contents).set({
+          templateId: (t as any).id as any,
+          ...( [15, 30, 45].includes(td) ? { duration: String(td) as any } : {}),
+          updatedAt: new Date().toISOString(),
+        } as any).where(and(eq(contents.id, id), eq(contents.userId, userId)));
+      }
       try {
-        await renderVideoForContent(id, userId);
+        const state = await startBackgroundRender(id, userId);
+        return reply.status(202).send(state as any);
       } catch (e: any) {
         const msg = String(e?.message ?? "render failed");
         if (msg.includes("not found")) return reply.status(404).send({ error: msg } as any);
-        if (msg.includes("Configure") || msg.includes("carousel") || msg.includes("no scripts") || msg.includes("unsupported kind")) return reply.status(400).send({ error: msg } as any);
+        if (msg.includes("Configure") || msg.includes("carousel") || msg.includes("no scripts") || msg.includes("unsupported kind") || msg.includes("influencer") || msg.includes("duration")) return reply.status(400).send({ error: msg } as any);
         request.log.warn({ err: e }, "render video failed");
         return reply.status(502).send({ error: msg.slice(0, 2000) } as any);
       }
-      const [fresh] = await db.select().from(contents).where(and(eq(contents.id, id), eq(contents.userId, userId)));
-      if (!fresh) return reply.status(404).send({ error: "Not found" } as any);
-      return parseContentRow(fresh as any) as any;
+    },
+  );
+
+  r.get(
+    "/contents/:id/render-status",
+    {
+      preHandler: requireSession,
+      schema: {
+        params: contentIdParamsSchema,
+        response: { 200: renderStatusSchema, 404: errorResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      if (!request.session) return;
+      const [row] = await db.select().from(contents).where(and(eq(contents.id, request.params.id), eq(contents.userId, request.session!.user.id)));
+      if (!row) return reply.status(404).send({ error: "Not found" } as any);
+      const live = getRenderStatus(request.params.id);
+      if (live) return live as any;
+      // no active render — report completed state from the row (or idle queued)
+      const parsed = parseContentRow(row as any) as any;
+      const expected = Number(parsed.duration ?? 15);
+      return {
+        contentId: row.id,
+        status: parsed.mediaUrl ? "completed" : "queued",
+        total: [15, 30, 45].includes(expected) ? expected / 5 : 3,
+        done: parsed.mediaUrl ? ([15, 30, 45].includes(expected) ? expected / 5 : 3) : 0,
+        expectedSeconds: expected,
+        actualSeconds: null,
+        mediaUrl: parsed.mediaUrl,
+        error: null,
+      } as any;
     },
   );
 
@@ -436,7 +526,16 @@ export async function contentRoutes(app: FastifyInstance) {
       const finalKind = (["carousel", "talkinghead", "greenscreen"] as const).includes(kind as any) ? kind : "talkinghead";
       const title = (body.title ?? idea.title).slice(0, 255);
       const selectedHook = body.selectedHook;
-      const duration = (body as any).duration as number | undefined;
+      // template is source of truth for duration + visual vibe
+      const template = await lookupTemplate((body as any).templateId);
+      if ((body as any).templateId && !template) return reply.status(400).send({ error: "template not found" } as any);
+      const templateDur = template ? Number((template as any).duration ?? 15) : null;
+      const duration = templateDur && [15, 30, 45].includes(templateDur)
+        ? templateDur
+        : ((body as any).duration as number | undefined);
+      const templateStyle = template
+        ? `\nVisual template: "${(template as any).title}" — style: ${(template as any).style ?? ""}${(template as any).structure ? ` — structure: ${(template as any).structure}` : ""}\nTemplate prompt (apply its look/feel to every beat): """${String((template as any).prompt ?? "").slice(0, 2000)}"""`
+        : "";
 
       // ponytail: script generation is LLM text — always use text provider
       const task = "text" as const;
@@ -464,7 +563,7 @@ export async function contentRoutes(app: FastifyInstance) {
       let res;
       try {
         res = await agent.generate(
-          `Brand: ${company.name}\nPersona:\n"""${company.persona!.slice(0, 6000)}"""\n\nSelected idea:\nTitle: ${idea.title}\nPain point: ${idea.painPoint}\nAngle: ${idea.angle ?? ""}\nHooks: ${idea.hooks.join(" | ")}\nSelected hook: "${selectedHook}"\nKind: ${finalKind}\n\nWrite the FULL script/content for this kind using the selected hook as the opening line. Respond with ONLY this JSON shape:\n${shapeHint}\n` +
+          `Brand: ${company.name}\nPersona:\n"""${company.persona!.slice(0, 6000)}"""\n\nSelected idea:\nTitle: ${idea.title}\nPain point: ${idea.painPoint}\nAngle: ${idea.angle ?? ""}\nHooks: ${idea.hooks.join(" | ")}\nSelected hook: "${selectedHook}"\nKind: ${finalKind}${template ? `\nTarget duration: ${duration}s — write enough beats to fill it` : ""}${templateStyle}\n\nWrite the FULL script/content for this kind using the selected hook as the opening line. Respond with ONLY this JSON shape:\n${shapeHint}\n` +
             `- title: reuse or refine "${title}", <=90 chars, brand voice\n` +
             (finalKind === "carousel"
               ? `- images: 4-7 slides; each text 10-220 chars, url must be a valid https URL (picsum placeholder ok)\n`
@@ -494,7 +593,7 @@ export async function contentRoutes(app: FastifyInstance) {
           // validate via zod
           const validatedImages = z.array(carouselImageSchema).safeParse(images);
           if (!validatedImages.success || validatedImages.data.length === 0) throw new Error(validatedImages.error?.issues[0]?.message || "no valid images");
-          full = { companyId: request.params.companyId, kind: finalKind, title: outTitle, images: validatedImages.data };
+          full = { companyId: request.params.companyId, kind: finalKind, title: outTitle, images: validatedImages.data, templateId: (template as any)?.id ?? (body as any).templateId ?? undefined };
         } else {
           const scripts = (Array.isArray(parsed.scripts) ? parsed.scripts : [])
             .slice(0, 50)
@@ -514,7 +613,7 @@ export async function contentRoutes(app: FastifyInstance) {
             const [inf] = await db.select().from(influencers).where(and(eq(influencers.id, influencerId), eq(influencers.userId, request.session!.user.id), eq(influencers.companyId, request.params.companyId)));
             if (!inf) throw new Error("influencer not found");
           }
-          full = { companyId: request.params.companyId, kind: finalKind, title: outTitle, scripts: validatedScripts.data, format, duration: dur, influencerId: influencerId ?? undefined };
+          full = { companyId: request.params.companyId, kind: finalKind, title: outTitle, scripts: validatedScripts.data, format, duration: dur, influencerId: influencerId ?? undefined, templateId: (template as any)?.id ?? (body as any).templateId ?? undefined };
         }
 
         const v = createContentSchema.safeParse(full);
@@ -525,6 +624,7 @@ export async function contentRoutes(app: FastifyInstance) {
           influencerDataUri = await influencerToDataUri((data as any).influencerId, request.session!.user.id, request.params.companyId);
           if (!influencerDataUri) throw new Error("influencer image unavailable");
         }
+        await ensureContentColumns();
         const [row] = await db
           .insert(contents)
           .values({
@@ -539,10 +639,14 @@ export async function contentRoutes(app: FastifyInstance) {
             format: data.format as any,
             duration: (data as any).duration as any,
             influencerId: (data as any).influencerId as any,
+            templateId: (data as any).templateId as any,
           } as any)
           .returning();
         const parsedRow = parseContentRow(row as any) as any;
-        void queueContentMedia({ userId: request.session!.user.id, companyId: request.params.companyId, contentId: row.id, kind: row.kind, images: parsedRow.images, scripts: parsedRow.scripts, format: row.format as any, influencerImageUrl: influencerDataUri });
+        // ponytail: images auto-render; video renders explicitly via POST /contents/:id/render
+        if (finalKind === "carousel") {
+          void queueContentMedia({ userId: request.session!.user.id, companyId: request.params.companyId, contentId: row.id, kind: row.kind, images: parsedRow.images, scripts: parsedRow.scripts, format: row.format as any, influencerImageUrl: influencerDataUri });
+        }
         return reply.status(201).send(parsedRow);
       } catch (e: any) {
         request.log.warn({ err: e }, "could not parse script JSON");

@@ -8,6 +8,8 @@ const envSchema = z.object({
   // ponytail: server-side only — the visual discovery feed's Pexels key. Never sent to the
   // client. Read lazily via process.env in pexels.service so read-only paths/tests don't need it.
   PEXELS_API_KEY: z.string().optional(),
+  // ponytail: stringbool — coerce would treat "false" as true
+  DRYRUN: z.stringbool().default(false),
 });
 
 export const env = envSchema.parse(process.env);

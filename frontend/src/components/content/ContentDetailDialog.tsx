@@ -1,5 +1,5 @@
 import { Copy, Film, Loader2, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Dialog,
   DialogClose,
@@ -10,9 +10,10 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
 import { CONTENT_TYPES, formatDateLong, type ContentItem } from './data'
 import { AiScorePill, PlatformList, StatusBadge, TypePreview } from './primitives'
-import { renderVideo } from '@/services/content'
+import { listContentTemplates, getContent, getRenderStatus, renderVideo, type ContentTemplate, type RenderStatus } from '@/services/content'
 
 export default function ContentDetailDialog({
   item,
@@ -29,8 +30,23 @@ export default function ContentDetailDialog({
 }) {
   const [rendering, setRendering] = useState(false)
   const [renderError, setRenderError] = useState<string | null>(null)
+  const [renderStatus, setRenderStatus] = useState<RenderStatus | null>(null)
+  const [templates, setTemplates] = useState<ContentTemplate[] | null>(null)
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null)
   const isVideo = item ? item.type === 'talkinghead' || item.type === 'greenscreen' : false
   const meta = item ? CONTENT_TYPES[item.type] : null
+
+  useEffect(() => {
+    if (!isVideo || !item) return
+    setSelectedTemplateId(item.templateId ?? null)
+    setRenderStatus(null)
+    setRenderError(null)
+    setRendering(false)
+    if (templates) return
+    void listContentTemplates().then(setTemplates).catch(() => setTemplates([]))
+  }, [isVideo, item, templates])
+
+  const selectedTemplate = templates?.find((t) => t.id === selectedTemplateId) ?? null
   return (
     <Dialog open={item !== null} onOpenChange={onOpenChange}>
       <DialogContent className="overflow-hidden p-0 sm:max-w-md">
@@ -57,6 +73,24 @@ export default function ContentDetailDialog({
 
               {isVideo && (
                 <div className="grid gap-2">
+                  {templates && templates.length > 0 && (
+                    <div className="grid gap-1.5">
+                      <Label className="text-xs">Template vibe for render</Label>
+                      <select
+                        value={selectedTemplateId ?? ''}
+                        onChange={(e) => setSelectedTemplateId(e.target.value || null)}
+                        className="flex h-8 w-full rounded-md border border-input bg-background px-3 py-1 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-0"
+                      >
+                        <option value="">Original template (none)</option>
+                        {templates.map((t) => (
+                          <option key={t.id} value={t.id}>
+                            {t.title} · {t.style.slice(0, 40)}
+                          </option>
+                        ))}
+                      </select>
+                      {selectedTemplate && <p className="text-xs text-muted-foreground line-clamp-2">{selectedTemplate.style} · {selectedTemplate.duration}s</p>}
+                    </div>
+                  )}
                   <Button
                     disabled={rendering}
                     onClick={async () => {
@@ -64,24 +98,49 @@ export default function ContentDetailDialog({
                       setRendering(true)
                       setRenderError(null)
                       try {
-                        const row = await renderVideo(item.id)
-                        const updated: ContentItem = {
-                          ...item,
-                          mediaUrl: row.mediaUrl,
-                          summary: row.scripts?.[0]?.prompt?.slice(0, 220) ?? item.summary,
-                        }
-                        onRendered?.(updated)
+                        // ponytail: background render — 202 immediately, poll status for N=duration/5 parts
+                        const started = await renderVideo(item.id, selectedTemplateId ? { templateId: selectedTemplateId } : undefined)
+                        setRenderStatus(started)
+                        const poll = setInterval(async () => {
+                          try {
+                            const s = await getRenderStatus(item.id)
+                            setRenderStatus(s)
+                            if (s.status === 'completed') {
+                              clearInterval(poll)
+                              const row = await getContent(item.id)
+                              const updated: ContentItem = {
+                                ...item,
+                                mediaUrl: row.mediaUrl,
+                                templateId: row.templateId ?? selectedTemplateId ?? item.templateId,
+                                summary: row.scripts?.[0]?.prompt?.slice(0, 220) ?? item.summary,
+                              }
+                              onRendered?.(updated)
+                              setRendering(false)
+                            } else if (s.status === 'failed') {
+                              clearInterval(poll)
+                              setRenderError(s.error ?? 'Render failed')
+                              setRendering(false)
+                            }
+                          } catch (e) {
+                            clearInterval(poll)
+                            setRenderError(e instanceof Error ? e.message : 'Render polling failed')
+                            setRendering(false)
+                          }
+                        }, 5000)
                       } catch (e) {
                         setRenderError(e instanceof Error ? e.message : 'Render failed')
-                      } finally {
                         setRendering(false)
                       }
                     }}
                   >
                     {rendering ? <Loader2 className="animate-spin" data-icon="inline-start" /> : <Film data-icon="inline-start" />}
-                    {rendering ? 'Rendering… this may take up to 5 minutes' : item.mediaUrl ? 'Re-render Video' : 'Render Video'}
+                    {rendering
+                      ? renderStatus
+                        ? `Rendering clip ${Math.min(renderStatus.done + 1, renderStatus.total)}/${renderStatus.total} (${renderStatus.expectedSeconds}s)…`
+                        : 'Starting render…'
+                      : item.mediaUrl ? 'Re-render Video' : 'Render Video'}
                   </Button>
-                  {rendering && <p className="text-xs text-muted-foreground">Blocking UI until video is ready — don't close the dialog.</p>}
+                  {rendering && <p className="text-xs text-muted-foreground">Rendering in background — you can close this dialog; progress continues server-side.</p>}
                   {renderError && <p className="text-xs text-destructive">{renderError}</p>}
                 </div>
               )}

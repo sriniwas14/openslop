@@ -46,6 +46,7 @@ export type ContentRow = {
   format: 'vertical' | 'horizontal' | null
   duration: number | null
   influencerId: string | null
+  templateId: string | null
   scheduledAt: string | null
   createdAt: string
   updatedAt: string
@@ -59,13 +60,44 @@ export function getContent(contentId: string): Promise<ContentRow> {
   return fetch(`/contents/${contentId}`, { credentials: 'include' }).then(handle<ContentRow>)
 }
 
-export function renderVideo(contentId: string): Promise<ContentRow> {
-  return fetch(`/contents/${contentId}/render`, { method: 'POST', credentials: 'include' }).then(handle<ContentRow>)
+export function renderVideo(contentId: string, body?: { templateId?: string }): Promise<RenderStatus> {
+  return fetch(`/contents/${contentId}/render`, { method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : '{}' }).then(handle<RenderStatus>)
+}
+
+export type RenderStatus = {
+  contentId: string
+  status: 'queued' | 'rendering' | 'completed' | 'failed'
+  total: number
+  done: number
+  expectedSeconds: number
+  actualSeconds: number | null
+  mediaUrl: string | null
+  error: string | null
+}
+
+export function getRenderStatus(contentId: string): Promise<RenderStatus> {
+  return fetch(`/contents/${contentId}/render-status`, { credentials: 'include' }).then(handle<RenderStatus>)
+}
+
+export type ContentTemplate = {
+  id: string
+  title: string
+  prompt: string
+  previewImage: string
+  duration: "15" | "30" | "45"
+  structure: string | null
+  style: string
+  createdAt: string
+  updatedAt: string
+}
+
+export function listContentTemplates(): Promise<ContentTemplate[]> {
+  return fetch('/content-templates').then(handle<ContentTemplate[]>)
 }
 
 export function generateFromIdea(
   companyId: string,
-  body: { idea: Idea; selectedHook: string; kind?: string; title?: string; duration?: 15 | 30 | 45; influencerId?: string },
+  body: { idea: Idea; selectedHook: string; kind?: string; title?: string; duration?: 15 | 30 | 45; influencerId?: string; templateId?: string; visualStyle?: string },
 ): Promise<unknown> {
   return fetch(`/companies/${companyId}/contents/generate`, {
     method: 'POST',
