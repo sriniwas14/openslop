@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom'
-import { Brain, FileText, LayoutDashboard, PlayCircle, Settings, TrendingUp, Users } from 'lucide-react'
+import { Bookmark, Brain, FileText, LayoutDashboard, PlayCircle, Settings, TrendingUp, Users } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import CompanyCombobox from '@/components/CompanyCombobox'
 import BrandLogo from '@/components/BrandLogo'
@@ -11,6 +11,7 @@ const topItems = [
   { to: '/dashboard/brand', label: 'Brand Intelligence', icon: Brain },
   { to: '/dashboard/content', label: 'Content', icon: FileText },
   { to: '/dashboard/feed', label: 'Content Feed', icon: PlayCircle },
+  { to: '/dashboard/library', label: 'Library', icon: Bookmark },
   { to: '/dashboard/influencers', label: 'Influencers', icon: Users },
 ]
 

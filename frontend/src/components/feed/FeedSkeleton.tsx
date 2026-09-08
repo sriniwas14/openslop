@@ -13,8 +13,8 @@ export default function FeedSkeleton() {
             <div className="h-6 w-20 animate-pulse rounded-full bg-muted" />
             <div className="h-6 w-36 animate-pulse rounded-full bg-muted" />
           </div>
-          {/* Media — same content-fitted portrait footprint as the review card */}
-          <div className="w-[min(100%,max(12rem,calc((100dvh-16rem)*9/16)))] overflow-hidden rounded-2xl border bg-card shadow-md sm:w-[min(100%,max(12rem,calc((100dvh-20rem)*9/16)))]">
+          {/* Media — same phone-like content-fitted footprint as the review card */}
+          <div className="w-[min(100%,max(12rem,calc((100dvh-16rem)*9/16)),24rem)] overflow-hidden rounded-2xl border bg-card shadow-md sm:w-[min(100%,max(12rem,calc((100dvh-20rem)*9/16)),24rem)]">
             <div className="aspect-[9/16] w-full animate-pulse bg-muted" />
           </div>
           {/* Actions */}

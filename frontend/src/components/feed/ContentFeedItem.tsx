@@ -17,6 +17,7 @@ import { type FeedItem, visualSrc } from '@/services/visual'
 import { platformMeta, formatLabel, typeLabel } from '@/components/feed/data'
 import MediaTextOverlay, { overlayBlocksForContent, type OverlayBlock } from '@/components/feed/MediaTextOverlay'
 import OverlayEditorDialog from '@/components/feed/OverlayEditorDialog'
+import ReviewDialog from '@/components/feed/ReviewDialog'
 
 // ---------------------------------------------------------------------------
 // Content review card: centered minimal approval UI.
@@ -36,29 +37,42 @@ type Props = {
   index: number
 }
 
+// Still-image formats; every other content format pairs with motion video.
+// Mirrors backend isVideoContentFormat (IMAGE_CONTENT_FORMATS in
+// backend/src/modules/ugc/ugc.schemas.ts) — last-resort detection when the
+// visual row carries no explicit media type.
+const IMAGE_CONTENT_FORMATS = new Set(['wall_of_text_slide', 'meme'])
+
+function hasVideoExtension(src: string) {
+  // Strip query/fragment first: cached or CDN URLs often look like
+  // "/media/files/abc" (no extension) or "clip.mp4?auto=compress".
+  return /\.(mp4|webm|mov)$/i.test(src.split(/[?#]/)[0])
+}
+
 export default function ContentFeedItem({ item, isActive }: Props) {
   const { content, visual, visualStatus } = item
   const { toast } = useToast()
   const baseSrc = visualSrc(visual)
 
-  // Overlay layers + custom image live on the card. Popup edits work on a
+  // Overlay layers + custom media live on the card. Popup edits work on a
   // private draft — the feed (and these states) only change on Done.
   const [blocks, setBlocks] = useState<OverlayBlock[]>(() => overlayBlocksForContent(content))
-  const [imageOverride, setImageOverride] = useState<string | null>(null)
+  const [mediaOverride, setMediaOverride] = useState<{ url: string; kind: 'image' | 'video' } | null>(null)
   const [editorOpen, setEditorOpen] = useState(false)
   const [editorSelectedId, setEditorSelectedId] = useState<string | null>(null)
+  const [reviewOpen, setReviewOpen] = useState(false)
   // Natural media dimensions — the viewport shrink-fits each post's actual
   // content so portrait video never sits in an oversized landscape box.
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null)
   const overrideRef = useRef<string | null>(null)
-  overrideRef.current = imageOverride
+  overrideRef.current = mediaOverride?.url ?? null
 
   // Fresh layers per post.
   useEffect(() => {
     setBlocks(overlayBlocksForContent(content))
     setNatural(null)
-    setImageOverride((prev) => {
-      if (prev) URL.revokeObjectURL(prev)
+    setMediaOverride((prev) => {
+      if (prev) URL.revokeObjectURL(prev.url)
       return null
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -95,20 +109,30 @@ export default function ContentFeedItem({ item, isActive }: Props) {
   }, [toast])
 
   const handleReview = useCallback(() => {
-    toast({ title: 'Marked as reviewed', variant: 'success' })
-  }, [toast])
+    setReviewOpen(true)
+  }, [])
 
-  const applyEditor = useCallback((nextBlocks: OverlayBlock[], nextImage: string | null) => {
+  const applyEditor = useCallback((nextBlocks: OverlayBlock[], nextUrl: string | null, nextKind: 'image' | 'video') => {
     setBlocks(nextBlocks)
-    setImageOverride((prev) => {
-      if (prev && prev !== nextImage) URL.revokeObjectURL(prev)
-      return nextImage
+    setMediaOverride((prev) => {
+      if (prev && prev.url !== nextUrl) URL.revokeObjectURL(prev.url)
+      return nextUrl ? { url: nextUrl, kind: nextKind } : null
     })
   }, [])
 
-  const displaySrc = imageOverride ?? baseSrc
+  const displaySrc = mediaOverride?.url ?? baseSrc
   const src = displaySrc
-  const isVideo = visual?.mediaType === 'video' || (!!src && /\.(mp4|webm|mov)$/i.test(src))
+  // Explicit kind wins (override kind, then the server's media type). Blob
+  // overrides carry no file extension, and cached/CDN URLs may be
+  // extensionless or carry query strings — so only then fall back to the
+  // extension test, and finally to the format pairing (non-meme/slide
+  // formats are motion). Without this, videos render as broken <img>.
+  const explicitKind = mediaOverride?.kind ?? visual?.mediaType ?? null
+  const isVideo =
+    explicitKind === 'video' ||
+    (explicitKind == null &&
+      !!src &&
+      (hasVideoExtension(src) || !IMAGE_CONTENT_FORMATS.has(content.contentFormat)))
   const isPending = visualStatus === 'pending' || visualStatus === 'searching'
   const isFailed = visualStatus === 'failed'
   const isReview = visualStatus === 'needs_review'
@@ -138,17 +162,18 @@ export default function ContentFeedItem({ item, isActive }: Props) {
         </span>
       </div>
 
-      {/* Hero media — viewport shrink-fits the actual content: portrait
-          video gets a portrait box (no wide black side bars), and the
-          width derives from available viewport height so pills + media +
-          actions fit on one screen. Overlay text scales with this box
-          (fontSize = width × size fraction), so text shrinks together
-          with the media. The media element fills the container with
+      {/* Hero media — phone-like viewport that shrink-fits the actual
+          content: portrait video gets a portrait box (no wide black side
+          bars), capped at 24rem so the post previews at true social-media
+          scale instead of stretching across the screen. Width derives from
+          available viewport height so pills + media + actions fit on one
+          screen. Overlay text scales with this box (fontSize = width × size
+          fraction). The media element fills the container with
           object-contain, so the full frame is always visible and never
           cropped by it. Visually clean: no action buttons overlap it. */}
       <div
         style={{ '--ar': String(mediaAspect) } as CSSProperties}
-        className="w-[min(100%,max(12rem,calc((100dvh-16rem)*var(--ar))))] overflow-hidden rounded-2xl border bg-card shadow-md sm:w-[min(100%,max(12rem,calc((100dvh-20rem)*var(--ar))))]"
+        className="w-[min(100%,max(12rem,calc((100dvh-16rem)*var(--ar))),24rem)] overflow-hidden rounded-2xl border bg-card shadow-md sm:w-[min(100%,max(12rem,calc((100dvh-20rem)*var(--ar))),24rem)]"
       >
         <div className="relative aspect-[var(--ar)] w-full bg-black">
           {isPending ? (
@@ -156,7 +181,13 @@ export default function ContentFeedItem({ item, isActive }: Props) {
           ) : isFailed ? (
             <FailedVisual />
           ) : isReview ? (
-            <ReviewVisual src={src} onNaturalSize={reportNaturalSize} />
+            <ReviewVisual
+              src={src}
+              isVideo={isVideo}
+              isActive={isActive}
+              poster={visual?.posterUrl ?? visual?.previewUrl}
+              onNaturalSize={reportNaturalSize}
+            />
           ) : isVideo && src ? (
             <VideoVisual src={src} isActive={isActive} poster={visual?.posterUrl ?? visual?.previewUrl} onNaturalSize={reportNaturalSize} />
           ) : src ? (
@@ -220,13 +251,25 @@ export default function ContentFeedItem({ item, isActive }: Props) {
         onOpenChange={setEditorOpen}
         content={content}
         visualSrc={baseSrc}
-        isVideo={!!baseSrc && /\.(mp4|webm|mov)$/i.test(baseSrc)}
+        isVideo={isVideo}
         poster={visual?.previewUrl}
         initialBlocks={blocks}
-        initialImageOverride={imageOverride}
+        initialImageOverride={mediaOverride?.url ?? null}
+        initialMediaKind={mediaOverride?.kind ?? null}
         initialSelectedId={editorSelectedId}
         mediaAspect={mediaAspect}
         onApply={applyEditor}
+      />
+
+      {/* Review popup — save to Library or share */}
+      <ReviewDialog
+        open={reviewOpen}
+        onOpenChange={setReviewOpen}
+        item={item}
+        visualUrl={src}
+        mediaType={isVideo ? 'video' : 'image'}
+        blocks={blocks}
+        aspect={mediaAspect}
       />
     </article>
   )
@@ -283,6 +326,13 @@ function VideoVisual({ src, isActive, poster, onNaturalSize }: { src: string; is
   const [muted, setMuted] = useState(true)
   const [playing, setPlaying] = useState(false)
   const [showPlayBtn, setShowPlayBtn] = useState(false)
+  const [failed, setFailed] = useState(false)
+
+  // Reset the error state when the source changes (the instance persists
+  // across posts within the same branch).
+  useEffect(() => {
+    setFailed(false)
+  }, [src])
 
   useEffect(() => {
     const v = ref.current
@@ -324,21 +374,31 @@ function VideoVisual({ src, isActive, poster, onNaturalSize }: { src: string; is
 
   return (
     <div className="relative h-full w-full">
-      <video
-        ref={ref}
-        src={src}
-        poster={poster ?? undefined}
-        muted
-        loop
-        playsInline
-        preload={isActive ? 'auto' : 'metadata'}
-        onClick={togglePlay}
-        onLoadedMetadata={(e) => {
-          const v = e.currentTarget
-          if (v.videoWidth && v.videoHeight) onNaturalSize?.(v.videoWidth, v.videoHeight)
-        }}
-        className="h-full w-full object-contain"
-      />
+      {failed ? (
+        <div className="flex h-full w-full items-center justify-center bg-muted">
+          <div className="flex flex-col items-center gap-2 text-muted-foreground">
+            <AlertTriangle className="size-7" />
+            <span className="text-xs">Video unavailable</span>
+          </div>
+        </div>
+      ) : (
+        <video
+          ref={ref}
+          src={src}
+          poster={poster ?? undefined}
+          muted
+          loop
+          playsInline
+          preload={isActive ? 'auto' : 'metadata'}
+          onClick={togglePlay}
+          onLoadedMetadata={(e) => {
+            const v = e.currentTarget
+            if (v.videoWidth && v.videoHeight) onNaturalSize?.(v.videoWidth, v.videoHeight)
+          }}
+          onError={() => setFailed(true)}
+          className="h-full w-full object-contain"
+        />
+      )}
 
       {showPlayBtn && !playing && (
         <button
@@ -391,8 +451,30 @@ function FailedVisual() {
   )
 }
 
-function ReviewVisual({ src, onNaturalSize }: { src: string | null; onNaturalSize?: (w: number, h: number) => void }) {
+function ReviewVisual({
+  src,
+  isVideo,
+  isActive,
+  poster,
+  onNaturalSize,
+}: {
+  src: string | null
+  isVideo: boolean
+  isActive: boolean
+  poster?: string | null
+  onNaturalSize?: (w: number, h: number) => void
+}) {
   if (!src) return <PendingVisual />
+  // A needs_review video must still play — a static <img> of an mp4 renders
+  // nothing. The dim layer is pointer-transparent so taps reach the video.
+  if (isVideo) {
+    return (
+      <div className="relative h-full w-full">
+        <VideoVisual src={src} isActive={isActive} poster={poster} onNaturalSize={onNaturalSize} />
+        <div className="pointer-events-none absolute inset-0 bg-black/20" />
+      </div>
+    )
+  }
   return (
     <div className="relative h-full w-full">
       <img
@@ -404,7 +486,7 @@ function ReviewVisual({ src, onNaturalSize }: { src: string | null; onNaturalSiz
         }}
         className="h-full w-full object-contain opacity-80"
       />
-      <div className="absolute inset-0 bg-black/20" />
+      <div className="pointer-events-none absolute inset-0 bg-black/20" />
     </div>
   )
 }

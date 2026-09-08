@@ -6,6 +6,7 @@ import Dashboard from '@/pages/Dashboard'
 import Trending from '@/pages/Trending'
 import ContentPage from '@/pages/Content'
 import ContentFeed from '@/pages/ContentFeed'
+import Library from '@/pages/Library'
 import InfluencersPage from '@/pages/Influencers'
 import Settings from '@/pages/Settings'
 import Creators from '@/pages/Creators'
@@ -41,6 +42,7 @@ export default function App() {
             <Route path="/dashboard/trending" element={<Trending />} />
             <Route path="/dashboard/content" element={<ContentPage />} />
             <Route path="/dashboard/feed" element={<ContentFeed />} />
+            <Route path="/dashboard/library" element={<Library />} />
             <Route path="/dashboard/brand" element={<BrandIntelligence />}>
               <Route index element={<OverviewTab />} />
               <Route path="identity" element={<IdentityTab />} />
