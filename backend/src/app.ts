@@ -5,7 +5,7 @@ import {
   type ZodTypeProvider,
 } from "fastify-type-provider-zod";
 import { registerSwagger } from "./plugins/swagger";
-import { authRoutes } from "./plugins/auth";
+import { authRoutes, requireSession } from "./plugins/auth";
 import { healthRoutes } from "./modules/health/health.routes";
 import { companyRoutes } from "./modules/company/company.routes";
 import { brandRoutes } from "./modules/brand/brand.routes";
@@ -55,6 +55,75 @@ export function createApp() {
       return reply.send(createReadStream(filePath));
     } catch {
       return reply.status(404).send({ error: "not found" });
+    }
+  });
+
+  // ponytail: same-origin media proxy — canvas export taints on remote
+  // visuals without CORS headers; proxying bytes keeps text baked in.
+  // SSRF guard: http(s) only, no creds forwarded, 15s timeout, 15MB cap.
+  app.get("/media/proxy", async (request, reply) => {
+    const { url } = (request.query ?? {}) as { url?: string };
+    let target: URL;
+    try {
+      target = new URL(String(url ?? ""));
+    } catch {
+      return reply.status(400).send({ error: "invalid url" });
+    }
+    if (target.protocol !== "http:" && target.protocol !== "https:") {
+      return reply.status(400).send({ error: "only http(s) allowed" });
+    }
+    try {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 15000);
+      const res = await fetch(target.toString(), { signal: ctrl.signal, redirect: "follow" });
+      clearTimeout(timer);
+      if (!res.ok) return reply.status(502).send({ error: `fetch failed (${res.status})` });
+      const ct = res.headers.get("content-type") ?? "";
+      if (!/^(image|video)\//.test(ct)) return reply.status(415).send({ error: "not an image/video" });
+      const len = Number(res.headers.get("content-length") ?? "0");
+      if (len > 15 * 1024 * 1024) return reply.status(413).send({ error: "file too large" });
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length > 15 * 1024 * 1024) return reply.status(413).send({ error: "file too large" });
+      reply.header("content-type", ct).header("cache-control", "public, max-age=86400").header("content-length", String(buf.length));
+      return reply.send(buf);
+    } catch {
+      return reply.status(502).send({ error: "fetch failed" });
+    }
+  });
+
+  // ponytail: WebM → MP4 transmux — browsers MediaRecorder only emits WebM
+  // (unuploadable to IG/TikTok); ffmpeg re-encodes to H.264/AAC server-side.
+  // Session-gated: conversion burns CPU, must not be anonymous.
+  app.addContentTypeParser("video/webm", { parseAs: "buffer" }, (_req, body, done) => done(null, body));
+  app.post("/media/convert", { preHandler: requireSession }, async (request, reply) => {
+    const input = request.body as Buffer | undefined;
+    if (!input || !(input instanceof Buffer) || input.length === 0) {
+      return reply.status(400).send({ error: "empty webm body" });
+    }
+    if (input.length > 15 * 1024 * 1024) return reply.status(413).send({ error: "file too large" });
+    const { spawn } = await import("node:child_process");
+    const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const path = await import("node:path");
+    const dir = await mkdtemp(path.join(tmpdir(), "convert-"));
+    const inPath = path.join(dir, "in.webm");
+    const outPath = path.join(dir, "out.mp4");
+    try {
+      await writeFile(inPath, input);
+      await new Promise<void>((resolve, reject) => {
+        const p = spawn("ffmpeg", ["-y", "-i", inPath, "-c:v", "libx264", "-preset", "fast", "-crf", "23", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", outPath], { stdio: "ignore" });
+        p.on("error", reject);
+        p.on("close", (code) => (code === 0 ? resolve() : reject(new Error(`ffmpeg exited ${code}`))));
+      });
+      const { readFile } = await import("node:fs/promises");
+      const mp4 = await readFile(outPath);
+      reply.header("content-type", "video/mp4").header("content-length", String(mp4.length));
+      return reply.send(mp4);
+    } catch (e) {
+      request.log.warn({ err: e }, "webm→mp4 conversion failed");
+      return reply.status(500).send({ error: "conversion failed — is ffmpeg installed?" });
+    } finally {
+      await rm(dir, { recursive: true, force: true }).catch(() => {});
     }
   });
 

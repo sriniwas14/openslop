@@ -37,11 +37,14 @@ export type OverlayConfig = {
 }
 
 // ---------------------------------------------------------------------------
-// Fixed overlay text size — literal px everywhere (feed card AND export).
+// Fixed overlay text size in the feed — literal 14px everywhere on screen.
 // The engine starts here and only shrinks (never grows) for long text.
+// Downloads opt into larger text via the exportScale parameter (never the
+// feed): export passes (W × block.size) / 14 so baked text lands at true
+// post proportions while the preview stays exactly as it looks today.
 // ---------------------------------------------------------------------------
 
-/** Base overlay font size in px. */
+/** Base overlay font size in px (feed preview + editor). */
 export const FIXED_FONT_SIZE_PX = 14
 /** Floor for shrink-to-fit on long text. */
 export const FIXED_MIN_FONT_SIZE_PX = 10
@@ -50,9 +53,9 @@ export const DEFAULT_OVERLAY_CONFIG: OverlayConfig = {
   text: '',
   fontFamily: "'Inter Variable', 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif",
   fontWeight: 800,
-  // Fixed 14px overlay text — literal px at any container width or export
-  // resolution (not width-derived). Only shrinks for long text, never grows.
-  // fontSizePct/minFontSizePct below are dead while FIXED_FONT_SIZE_PX holds.
+  // Fixed 14px overlay text on screen — literal px at any container width.
+  // Only shrinks for long text, never grows. fontSizePct below is applied
+  // only through exportScale at download time, never in the feed.
   maxWidthPct: 0.80,
   lineHeight: 1.18,
   letterSpacing: '0em',
@@ -126,7 +129,7 @@ export type CompositionPreset = {
   x: number
   /** % from top (block centre). */
   y: number
-  /** Base font size as fraction of media width; unused while FIXED_FONT_SIZE_PX holds. */
+  /** Base font size as fraction of media width; applied only via exportScale at download. */
   size?: number
   /** Max text width as fraction of media width; defaults to 0.80. */
   maxWidthPct?: number
@@ -363,6 +366,11 @@ export function computeOverlayLayout(
   container: { width: number; height: number },
   overrides?: Partial<OverlayConfig>,
   ctx?: CanvasRenderingContext2D | null,
+  // Download-only multiplier (default 1 = feed). Export passes
+  // (W × block.size) / FIXED_FONT_SIZE_PX so baked text lands at true post
+  // proportions; wrapping is recomputed at the large size, positions stay
+  // fraction-identical. Preview/editor never pass this.
+  exportScale = 1,
 ): OverlayLayout {
   const aspect = ASPECT_OVERRIDES[aspectKey(container.width, container.height)]
   const cfg = mergeConfig(mergeConfig(DEFAULT_OVERLAY_CONFIG, aspect), overrides)
@@ -392,9 +400,10 @@ export function computeOverlayLayout(
   const availableHeight = h - safeTop - safeBottom
   const maxWidthPx = w * cfg.maxWidthPct
 
-  // Fixed 14px start; shrink only until lines fit (never grow).
-  let fontSize = FIXED_FONT_SIZE_PX
-  const minFontSize = FIXED_MIN_FONT_SIZE_PX
+  // Fixed 14px start (× exportScale for downloads); shrink only until
+  // lines fit, never grow.
+  let fontSize = FIXED_FONT_SIZE_PX * exportScale
+  const minFontSize = FIXED_MIN_FONT_SIZE_PX * exportScale
   const lineHeightPx = () => Math.round(fontSize * cfg.lineHeight)
 
   let lines: string[] = []

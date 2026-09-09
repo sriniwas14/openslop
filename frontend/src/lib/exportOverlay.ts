@@ -6,14 +6,27 @@ import type { MemeGifLayer } from '@/components/feed/MemeGifOverlay'
 // Client-side export — bakes overlay text layers into the downloaded file so
 // the image/video carries the same text seen in the feed/Library preview.
 //
-// Layout comes from the shared engine (computeOverlayLayout), so wrapping,
-// sizing and positioning match the preview: every fraction is relative to
-// the full output frame, exactly like the on-screen overlay box.
+// Layout comes from the shared engine (computeOverlayLayout), which sizes
+// text proportionally to frame width — so wrapping, sizing and positioning
+// match the preview relatively at any resolution (WYSIWYG).
+//
+// Output is normalized to a per-post format frame (default 9:16 1080×1920
+// for Reels/TikTok) with a full-bleed cover-crop — no black letterbox bars.
+// Videos record to WebM via canvas.captureStream, then POST to
+// /media/convert for an ffmpeg H.264 MP4 that IG/TikTok accept.
 //
 // Meme posts additionally bake the Layer 3 GIF's first frame (an animated
 // GIF cannot survive a PNG/WebM-canvas export — the still frame is the
 // documented fallback), composited UNDER the text like the live preview.
 // ---------------------------------------------------------------------------
+
+export type ExportFormatId = '9:16' | '1:1' | '4:5'
+
+export const EXPORT_FORMATS: Record<ExportFormatId, { W: number; H: number; label: string }> = {
+  '9:16': { W: 1080, H: 1920, label: 'Reels / TikTok · 9:16' },
+  '1:1': { W: 1080, H: 1080, label: 'Square · 1:1' },
+  '4:5': { W: 1080, H: 1350, label: 'Portrait · 4:5' },
+}
 
 export type ExportInput = {
   url: string
@@ -25,13 +38,21 @@ export type ExportInput = {
   gifLayer?: MemeGifLayer | null
 }
 
+function proxied(url: string): string {
+  // Same-origin / embedded sources never taint the canvas — fetch directly.
+  // Remote http(s) goes through the backend proxy so baked text survives.
+  if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('/') || url.startsWith(window.location.origin)) return url
+  if (/^https?:\/\//i.test(url)) return `/media/proxy?url=${encodeURIComponent(url)}`
+  return url
+}
+
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image()
     img.crossOrigin = 'anonymous'
     img.onload = () => resolve(img)
     img.onerror = () => reject(new Error('image load failed'))
-    img.src = url
+    img.src = proxied(url)
   })
 }
 
@@ -43,7 +64,7 @@ function loadVideo(url: string): Promise<HTMLVideoElement> {
     v.preload = 'auto'
     v.onloadedmetadata = () => resolve(v)
     v.onerror = () => reject(new Error('video load failed'))
-    v.src = url
+    v.src = proxied(url)
   })
 }
 
@@ -61,6 +82,10 @@ async function ensureFont(weight: number) {
 /** Draw one overlay block onto ctx for an output frame of W×H. */
 function drawBlock(ctx: CanvasRenderingContext2D, block: OverlayBlock, W: number, H: number) {
   const bgOn = block.backgroundEnabled
+  // Download-only scaling: the feed renders this block at a fixed 14px, so
+  // scale up for the baked file (3x → ~42px headline on a 1080-wide frame).
+  // The feed itself is untouched — this runs only at download time.
+  const exportScale = 3
   const layout = computeOverlayLayout(
     block.text,
     { width: W, height: H },
@@ -72,6 +97,8 @@ function drawBlock(ctx: CanvasRenderingContext2D, block: OverlayBlock, W: number
       fontWeight: block.fontWeight ?? (block.bold ? 800 : 500),
       ...(bgOn ? { lineHeight: HIGHLIGHT.lineHeight } : {}),
     },
+    null,
+    exportScale,
   )
   if (layout.lines.length === 0 || layout.fontSize <= 0) return
 
@@ -119,7 +146,7 @@ function drawBlock(ctx: CanvasRenderingContext2D, block: OverlayBlock, W: number
   ctx.restore()
 }
 
-/** Paint the source frame contain-fitted onto a black frame (matches feed). */
+/** Paint the source frame full-bleed (cover-crop) — Reels/TikTok native, no bars. */
 function paintFrame(
   ctx: CanvasRenderingContext2D,
   source: HTMLImageElement | HTMLVideoElement,
@@ -128,9 +155,7 @@ function paintFrame(
   W: number,
   H: number,
 ) {
-  ctx.fillStyle = '#000000'
-  ctx.fillRect(0, 0, W, H)
-  const scale = Math.min(W / sw, H / sh)
+  const scale = Math.max(W / sw, H / sh)
   const dw = sw * scale
   const dh = sh * scale
   ctx.drawImage(source, (W - dw) / 2, (H - dh) / 2, dw, dh)
@@ -198,11 +223,10 @@ function downloadBlob(blob: Blob, filename: string) {
   }
 }
 
-/** Baked PNG download for image posts. Throws → caller falls back to raw. */
-export async function exportImageWithOverlay(input: ExportInput, filename: string): Promise<void> {
+/** Baked PNG download for image posts, normalized to the format frame. Throws → caller falls back to raw. */
+export async function exportImageWithOverlay(input: ExportInput, filename: string, format: ExportFormatId = '9:16'): Promise<void> {
   const img = await loadImage(input.url)
-  const W = img.naturalWidth || 1080
-  const H = img.naturalHeight || 1350
+  const { W, H } = EXPORT_FORMATS[format] ?? EXPORT_FORMATS['9:16']
   await ensureFont(700)
   const canvas = document.createElement('canvas')
   canvas.width = W
@@ -218,18 +242,20 @@ export async function exportImageWithOverlay(input: ExportInput, filename: strin
 }
 
 /**
- * Baked WebM download for video posts — replays the clip through a canvas
- * with the text painted every frame. Falls back to a baked still frame
- * when recording is unsupported; throws when nothing can be produced.
+ * Baked MP4 download for video posts — replays the clip through a canvas
+ * with the text painted every frame, records WebM, then converts to H.264
+ * MP4 via POST /media/convert (IG/TikTok don't accept WebM). Falls back to
+ * a baked still frame when recording is unsupported, or the raw WebM when
+ * conversion fails. Returns which artifact was produced.
  */
 export async function exportVideoWithOverlay(
   input: ExportInput,
   filename: string,
+  format: ExportFormatId = '9:16',
   onStillFallback?: () => void,
-): Promise<void> {
+): Promise<'mp4' | 'webm' | 'still'> {
   const v = await loadVideo(input.url)
-  const W = v.videoWidth || 720
-  const H = v.videoHeight || 1280
+  const { W, H } = EXPORT_FORMATS[format] ?? EXPORT_FORMATS['9:16']
   await ensureFont(700)
   const gif = await loadGifFirstFrame(input.memeUrl)
 
@@ -259,7 +285,7 @@ export async function exportVideoWithOverlay(
     paint(ctx)
     onStillFallback?.()
     downloadBlob(await canvasToBlob(canvas, 'image/png'), filename.replace(/\.webm$/i, '.png'))
-    return
+    return 'still'
   }
 
   const canvas = document.createElement('canvas')
@@ -320,5 +346,15 @@ export async function exportVideoWithOverlay(
   const blob = await done
   v.removeAttribute('src')
   v.load()
-  downloadBlob(blob, filename)
+  // WebM → MP4 so the file uploads to Instagram/TikTok; raw WebM fallback.
+  try {
+    const res = await fetch('/media/convert', { method: 'POST', credentials: 'include', headers: { 'content-type': 'video/webm' }, body: blob })
+    if (!res.ok) throw new Error(`convert ${res.status}`)
+    const mp4 = await res.blob()
+    downloadBlob(mp4, filename.replace(/\.webm$/i, '.mp4'))
+    return 'mp4'
+  } catch {
+    downloadBlob(blob, filename)
+    return 'webm'
+  }
 }

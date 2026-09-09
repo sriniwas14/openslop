@@ -39,11 +39,12 @@ export type OverlayConfig = {
 }
 
 // ---------------------------------------------------------------------------
-// Fixed overlay text size — literal px everywhere (feed card AND export).
+// Fixed overlay text size on screen — literal 14px. Downloads opt into
+// larger text via the exportScale parameter (never the feed).
 // Mirror of frontend/src/components/feed/overlayConfig.ts.
 // ---------------------------------------------------------------------------
 
-/** Base overlay font size in px. */
+/** Base overlay font size in px (feed preview + editor). */
 export const FIXED_FONT_SIZE_PX = 14;
 /** Floor for shrink-to-fit on long text. */
 export const FIXED_MIN_FONT_SIZE_PX = 10;
@@ -52,9 +53,8 @@ export const DEFAULT_OVERLAY_CONFIG: OverlayConfig = {
   text: '',
   fontFamily: "Inter, 'Inter Variable', Helvetica, Arial, sans-serif",
   fontWeight: 800,
-  // Fixed 14px overlay text — literal px at any container width or export
-  // resolution (not width-derived). Only shrinks for long text, never grows.
-  // fontSizePct/minFontSizePct below are dead while FIXED_FONT_SIZE_PX holds.
+  // Fixed 14px overlay text on screen — literal px at any container width.
+  // Only shrinks for long text, never grows.
   maxWidthPct: 0.80,
   lineHeight: 1.18,
   letterSpacing: '0em',
@@ -249,6 +249,8 @@ export function computeOverlayLayout(
   rawText: string,
   container: { width: number; height: number },
   overrides?: Partial<OverlayConfig>,
+  // Download-only multiplier (default 1 = feed). Mirror of the frontend param.
+  exportScale = 1,
 ): OverlayLayout {
   const aspect = ASPECT_OVERRIDES[aspectKey(container.width, container.height)];
   const cfg = mergeConfig(mergeConfig(DEFAULT_OVERLAY_CONFIG, aspect), overrides);
@@ -278,9 +280,10 @@ export function computeOverlayLayout(
   const availableHeight = h - safeTop - safeBottom;
   const maxWidthPx = w * cfg.maxWidthPct;
 
-  // Fixed 14px start; shrink only until lines fit (never grow).
-  let fontSize = FIXED_FONT_SIZE_PX;
-  const minFontSize = FIXED_MIN_FONT_SIZE_PX;
+  // Fixed 14px start (× exportScale for downloads); shrink only until
+  // lines fit, never grow.
+  let fontSize = FIXED_FONT_SIZE_PX * exportScale;
+  const minFontSize = FIXED_MIN_FONT_SIZE_PX * exportScale;
   const lineHeightPx = () => Math.round(fontSize * cfg.lineHeight);
 
   let lines: string[] = [];

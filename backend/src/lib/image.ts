@@ -133,7 +133,10 @@ export async function overlayCenteredTextOnImage(
 
   // Chips need the same roomier line height the preview uses.
   const mergedOverrides = background?.enabled ? { ...overrides, lineHeight: HIGHLIGHT.lineHeight } : overrides;
-  const layout = computeOverlayLayout(text, { width: outW, height: outH }, mergedOverrides);
+  // Download-only scaling: the feed renders at a fixed 14px, so scale up
+  // for the baked file (3x → ~42px headline on a 1080-wide frame).
+  const exportScale = 3;
+  const layout = computeOverlayLayout(text, { width: outW, height: outH }, mergedOverrides, exportScale);
   const cfg = layout.config;
   const cx = layout.leftPx;
 
