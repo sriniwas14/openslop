@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label'
 import { CONTENT_TYPES, formatDateLong, type ContentItem } from './data'
 import { AiScorePill, PlatformList, StatusBadge, TypePreview } from './primitives'
 import { listContentTemplates, getContent, getRenderStatus, renderVideo, type ContentTemplate, type RenderStatus } from '@/services/content'
+import { PostMediaContainer, postSourceFromContentItem } from '@/components/feed/PostContainer'
 
 export default function ContentDetailDialog({
   item,
@@ -47,6 +48,7 @@ export default function ContentDetailDialog({
   }, [isVideo, item, templates])
 
   const selectedTemplate = templates?.find((t) => t.id === selectedTemplateId) ?? null
+
   return (
     <Dialog open={item !== null} onOpenChange={onOpenChange}>
       <DialogContent className="overflow-hidden p-0 sm:max-w-md">
@@ -65,8 +67,8 @@ export default function ContentDetailDialog({
               </DialogHeader>
 
               {item.mediaUrl && (
-                <div className="overflow-hidden rounded-lg border bg-muted/20">
-                  {item.type === 'carousel' ? <img src={item.mediaUrl} alt="Generated content" className="max-h-64 w-full object-contain" /> : <video src={item.mediaUrl} controls className="max-h-64 w-full" />}
+                <div className="grid place-items-center overflow-hidden rounded-lg border bg-muted/20 p-2">
+                  <PostMediaPreview item={item} />
                   <a href={item.mediaUrl} target="_blank" rel="noreferrer" className="block px-3 py-2 text-xs text-muted-foreground underline">Open generated media</a>
                 </div>
               )}
@@ -194,5 +196,22 @@ export default function ContentDetailDialog({
         )}
       </DialogContent>
     </Dialog>
+  )
+}
+
+// ponytail: postSourceFromContentItem memoizes per item id — the media box
+// resetKey tracks the same id, so dialog switches never show a stale frame.
+function PostMediaPreview({ item }: { item: ContentItem }) {
+  const source = postSourceFromContentItem(item)
+  return (
+    <PostMediaContainer
+      src={source.visualUrl}
+      alt={item.title}
+      mediaType={source.mediaType}
+      aspect={source.aspect}
+      resetKey={source.key}
+      visualStatus={source.visualStatus}
+      videoControls={source.mediaType === 'video'}
+    />
   )
 }

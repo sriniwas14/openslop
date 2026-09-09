@@ -18,7 +18,7 @@ import type { MemeGifLayer } from '@/components/feed/MemeGifOverlay'
 
 // ---------------------------------------------------------------------------
 // Review popup — opened from the feed's Review button. Two options:
-//   1. Save this post → stored in the Library (browser-local, per brand).
+//   1. Save this post → stored in the Library DB (user + brand scoped).
 //   2. Share on Insta → native share sheet, clipboard fallback (no
 //      publishing integration exists on the backend).
 // ---------------------------------------------------------------------------
@@ -45,8 +45,14 @@ export default function ReviewDialog({ open, onOpenChange, item, visualUrl, medi
   // Fresh state per open — an already-saved post shows the confirmation.
   useEffect(() => {
     if (open && item) {
-      setSaved(isPostSaved(item.content.companyId, item.content.id))
       setSaving(false)
+      let cancelled = false
+      isPostSaved(item.content.companyId, item.content.id)
+        .then((v) => !cancelled && setSaved(v))
+        .catch(() => !cancelled && setSaved(false))
+      return () => {
+        cancelled = true
+      }
     }
   }, [open, item])
 
@@ -57,15 +63,17 @@ export default function ReviewDialog({ open, onOpenChange, item, visualUrl, medi
   const handleSave = useCallback(() => {
     if (!item) return
     setSaving(true)
-    try {
-      saveFeedPost(item.content.companyId, item, visualUrl ?? visualSrc(item.visual), mediaType, { blocks, aspect, gifLayer: gifLayer ?? null })
-      setSaved(true)
-      toast({ title: 'Saved to Library', description: 'Find it under Library → My Content.', variant: 'success' })
-    } catch {
-      toast({ title: 'Could not save', variant: 'error' })
-    } finally {
-      setSaving(false)
-    }
+    void (async () => {
+      try {
+        await saveFeedPost(item.content.companyId, item, visualUrl ?? visualSrc(item.visual), mediaType, { blocks, aspect, gifLayer: gifLayer ?? null })
+        setSaved(true)
+        toast({ title: 'Saved to Library', description: 'Find it under Library → My Content.', variant: 'success' })
+      } catch (e: any) {
+        toast({ title: 'Could not save', description: String(e?.message ?? ''), variant: 'error' })
+      } finally {
+        setSaving(false)
+      }
+    })()
   }, [item, visualUrl, mediaType, blocks, aspect, gifLayer, toast])
 
   const handleShare = useCallback(async () => {

@@ -5,32 +5,33 @@ import { useToast } from '@/components/ui/toast'
 import { useCompany } from '@/context/CompanyContext'
 import { cn } from '@/lib/utils'
 import { platformMeta, typeLabel } from '@/components/feed/data'
-import MediaTextOverlay from '@/components/feed/MediaTextOverlay'
-import MemeGifOverlay, { DEFAULT_MEME_GIF_LAYER } from '@/components/feed/MemeGifOverlay'
+import PostContainer, { PostMediaContainer, postSourceFromBankItem, postSourceFromSavedPost } from '@/components/feed/PostContainer'
 import { StatusBadge } from '@/components/content/primitives'
 import LibraryDetailDialog from '@/components/library/LibraryDetailDialog'
 import {
   addMediaBankItem,
-  getMediaBlobUrl,
   listMediaBank,
   listSavedPosts,
-  putMediaBlob,
   removeMediaBankItem,
   removeSavedPost,
+  savedPostSrc,
   updateMediaBankItem,
   updateSavedPost,
+  updateSavedPostMedia,
   type LibraryStatus,
   type MediaBankItem,
   type SavedPost,
 } from '@/services/library'
 
 // ---------------------------------------------------------------------------
-// Content Library — browser-local (per brand) home for posts saved from the
-// Content Feed, the user's own uploads, and the media bank.
+// Content Library — DB-backed (user + brand scoped) home for posts saved from
+// the Content Feed, the user's own uploads, and the media bank. Nothing lives
+// in localStorage: Save in the feed POSTs to /companies/:id/library/posts and
+// every tab reads back from the DB for the selected brand.
 //
-// Cards follow the Content page language (masonry grid, cover media, status
-// row, title, meta footer); clicking a card opens a detail dialog where all
-// Library actions live. Saved cards keep their overlay-text preview.
+// Cards use the same reusable PostContainer media box as the feed (phone-capped
+// width, content-fitted aspect, same overlay engine); clicking a card opens a
+// detail dialog with the interactive PostContainer (Edit) + Library actions.
 // Tabs: My Content (saved feed posts) · My Post (own uploads) · Media Bank.
 // ---------------------------------------------------------------------------
 
@@ -67,6 +68,22 @@ function slugFilename(name: string, mediaType: 'image' | 'video') {
   return `${base}.${mediaType === 'video' ? 'mp4' : 'jpg'}`
 }
 
+// Session object URL (Edit-replaced visual) → data: URL for the DB upload.
+function blobUrlToDataUrl(url: string): Promise<string | null> {
+  return fetch(url)
+    .then((r) => r.blob())
+    .then(
+      (blob) =>
+        new Promise<string>((resolve, reject) => {
+          const fr = new FileReader()
+          fr.onload = () => resolve(String(fr.result ?? ''))
+          fr.onerror = () => reject(fr.error ?? new Error('read failed'))
+          fr.readAsDataURL(blob)
+        }),
+    )
+    .catch(() => null)
+}
+
 // Download helper — fetches remote URLs to a blob so the download
 // attribute works cross-origin; falls back to opening the file.
 async function downloadFile(url: string, filename: string): Promise<'downloaded' | 'opened' | 'failed'> {
@@ -99,7 +116,7 @@ export default function Library() {
   const [sub, setSub] = useState<SubTab>('all')
   const [saved, setSaved] = useState<SavedPost[]>([])
   const [bank, setBank] = useState<MediaBankItem[]>([])
-  const [urls, setUrls] = useState<Record<string, string>>({})
+  const [loading, setLoading] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [downloadingId, setDownloadingId] = useState<string | null>(null)
   const [selectedSavedId, setSelectedSavedId] = useState<string | null>(null)
@@ -112,40 +129,23 @@ export default function Library() {
       setBank([])
       return
     }
-    setSaved(listSavedPosts(selectedId))
-    setBank(listMediaBank(selectedId))
-  }, [selectedId])
+    setLoading(true)
+    void (async () => {
+      try {
+        const [posts, media] = await Promise.all([listSavedPosts(selectedId), listMediaBank(selectedId)])
+        setSaved(posts)
+        setBank(media)
+      } catch (e: any) {
+        toast({ title: 'Could not load Library', description: String(e?.message ?? ''), variant: 'error' })
+      } finally {
+        setLoading(false)
+      }
+    })()
+  }, [selectedId, toast])
 
   useEffect(() => {
     refresh()
   }, [refresh])
-
-  // Resolve media-bank blobs to object URLs (revoked on change/unmount).
-  useEffect(() => {
-    let cancelled = false
-    const created: string[] = []
-    async function load() {
-      const entries: Record<string, string> = {}
-      for (const m of bank) {
-        const url = await getMediaBlobUrl(m.blobId).catch(() => null)
-        if (cancelled) {
-          if (url) URL.revokeObjectURL(url)
-          return
-        }
-        if (url) {
-          entries[m.id] = url
-          created.push(url)
-        }
-      }
-      if (!cancelled) setUrls(entries)
-    }
-    void load()
-    return () => {
-      cancelled = true
-      created.forEach((u) => URL.revokeObjectURL(u))
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, bank.map((m) => m.id).join('|')])
 
   const visibleSaved = useMemo(
     () => saved.filter((p) => matchesSub(p.status, p.needsAttention, sub)),
@@ -160,11 +160,17 @@ export default function Library() {
   const selectedBank = selectedBankId ? (bank.find((m) => m.id === selectedBankId) ?? null) : null
 
   const patchSaved = useCallback(
-    (contentId: string, patch: Partial<Pick<SavedPost, 'status' | 'scheduledAt'>>, label: string) => {
+    (id: string, patch: Partial<Pick<SavedPost, 'status' | 'scheduledAt'>>, label: string) => {
       if (!selectedId) return
-      updateSavedPost(selectedId, contentId, patch)
-      setSaved(listSavedPosts(selectedId))
-      toast({ title: label, variant: 'success' })
+      void (async () => {
+        try {
+          const next = await updateSavedPost(selectedId, id, patch)
+          setSaved((prev) => prev.map((p) => (p.id === id ? next : p)))
+          toast({ title: label, variant: 'success' })
+        } catch (e: any) {
+          toast({ title: 'Update failed', description: String(e?.message ?? ''), variant: 'error' })
+        }
+      })()
     },
     [selectedId, toast],
   )
@@ -172,9 +178,15 @@ export default function Library() {
   const patchBank = useCallback(
     (id: string, patch: Partial<Pick<MediaBankItem, 'status' | 'scheduledAt'>>, label: string) => {
       if (!selectedId) return
-      updateMediaBankItem(selectedId, id, patch)
-      setBank(listMediaBank(selectedId))
-      toast({ title: label, variant: 'success' })
+      void (async () => {
+        try {
+          const next = await updateMediaBankItem(selectedId, id, patch)
+          setBank((prev) => prev.map((m) => (m.id === id ? next : m)))
+          toast({ title: label, variant: 'success' })
+        } catch (e: any) {
+          toast({ title: 'Update failed', description: String(e?.message ?? ''), variant: 'error' })
+        }
+      })()
     },
     [selectedId, toast],
   )
@@ -182,10 +194,16 @@ export default function Library() {
   const removeSaved = useCallback(
     (post: SavedPost) => {
       if (!selectedId) return
-      removeSavedPost(selectedId, post.contentId)
-      setSaved(listSavedPosts(selectedId))
-      setSelectedSavedId(null)
-      toast({ title: 'Removed from Library', variant: 'default' })
+      void (async () => {
+        try {
+          await removeSavedPost(selectedId, post.id)
+          setSaved((prev) => prev.filter((p) => p.id !== post.id))
+          setSelectedSavedId(null)
+          toast({ title: 'Removed from Library', variant: 'default' })
+        } catch (e: any) {
+          toast({ title: 'Remove failed', description: String(e?.message ?? ''), variant: 'error' })
+        }
+      })()
     },
     [selectedId, toast],
   )
@@ -193,17 +211,74 @@ export default function Library() {
   const removeBank = useCallback(
     (item: MediaBankItem) => {
       if (!selectedId) return
-      removeMediaBankItem(selectedId, item.id)
-      setBank(listMediaBank(selectedId))
-      setSelectedBankId(null)
-      toast({ title: 'Removed', variant: 'default' })
+      void (async () => {
+        try {
+          await removeMediaBankItem(selectedId, item.id)
+          setBank((prev) => prev.filter((m) => m.id !== item.id))
+          setSelectedBankId(null)
+          toast({ title: 'Removed', variant: 'default' })
+        } catch (e: any) {
+          toast({ title: 'Remove failed', description: String(e?.message ?? ''), variant: 'error' })
+        }
+      })()
+    },
+    [selectedId, toast],
+  )
+
+  // Persist an editor Done from the detail PostContainer: overlay layers always,
+  // plus the replacement visual when the session produced a new object URL.
+  const persistSavedEdit = useCallback(
+    (
+      post: SavedPost,
+      edit: { blocks: SavedPost['blocks']; gifLayer: SavedPost['gifLayer']; aspect: number | null; url: string | null; kind: 'image' | 'video' },
+    ) => {
+      if (!selectedId) return
+      void (async () => {
+        try {
+          let next = post
+          if (edit.url?.startsWith('blob:')) {
+            const dataUrl = await blobUrlToDataUrl(edit.url)
+            if (dataUrl) next = await updateSavedPostMedia(selectedId, post.id, { dataUrl, mediaType: edit.kind })
+          }
+          next = await updateSavedPost(selectedId, post.id, { blocks: edit.blocks, aspect: edit.aspect, gifLayer: edit.gifLayer })
+          setSaved((prev) => prev.map((p) => (p.id === post.id ? next : p)))
+          toast({ title: 'Edits saved to Library', variant: 'success' })
+        } catch (e: any) {
+          toast({ title: 'Could not save edits', description: String(e?.message ?? ''), variant: 'error' })
+        }
+      })()
+    },
+    [selectedId, toast],
+  )
+
+  const persistBankEdit = useCallback(
+    (
+      item: MediaBankItem,
+      edit: { blocks: MediaBankItem['blocks']; gifLayer: MediaBankItem['gifLayer']; aspect: number | null; url: string | null; kind: 'image' | 'video' },
+    ) => {
+      if (!selectedId) return
+      void (async () => {
+        try {
+          let patch: Parameters<typeof updateMediaBankItem>[2] = { blocks: edit.blocks, aspect: edit.aspect, gifLayer: edit.gifLayer }
+          if (edit.url?.startsWith('blob:')) {
+            const dataUrl = await blobUrlToDataUrl(edit.url)
+            if (dataUrl) patch = { ...patch, fileDataUrl: dataUrl, mediaType: edit.kind }
+          }
+          const next = await updateMediaBankItem(selectedId, item.id, patch)
+          setBank((prev) => prev.map((m) => (m.id === item.id ? next : m)))
+          toast({ title: 'Edits saved', variant: 'success' })
+        } catch (e: any) {
+          toast({ title: 'Could not save edits', description: String(e?.message ?? ''), variant: 'error' })
+        }
+      })()
     },
     [selectedId, toast],
   )
 
   const handleDownloadSaved = useCallback(
     async (post: SavedPost) => {
-      if (!post.visualUrl) {
+      const src = savedPostSrc(post)
+      if (!src) {
         toast({ title: 'No file to download', variant: 'warning' })
         return
       }
@@ -217,13 +292,13 @@ export default function Library() {
           const base = slugFilename(post.title ?? post.hook ?? 'post', post.mediaType).replace(/\.(mp4|jpg)$/i, '')
           if (post.mediaType === 'video') {
             await exportVideoWithOverlay(
-              { url: post.visualUrl, mediaType: 'video', blocks: post.blocks, memeUrl: post.memeUrl, gifLayer: post.gifLayer },
+              { url: src, mediaType: 'video', blocks: post.blocks, memeUrl: post.memeUrl, gifLayer: post.gifLayer },
               `${base}.webm`,
               () => toast({ title: 'Saved as still image', description: 'Video recording is unsupported here — exported one frame with text.', variant: 'info' }),
             )
           } else {
             await exportImageWithOverlay(
-              { url: post.visualUrl, mediaType: 'image', blocks: post.blocks, memeUrl: post.memeUrl, gifLayer: post.gifLayer },
+              { url: src, mediaType: 'image', blocks: post.blocks, memeUrl: post.memeUrl, gifLayer: post.gifLayer },
               `${base}.png`,
             )
           }
@@ -235,7 +310,7 @@ export default function Library() {
           setDownloadingId(null)
         }
       }
-      const result = await downloadFile(post.visualUrl, slugFilename(post.title ?? post.hook ?? 'post', post.mediaType))
+      const result = await downloadFile(src, slugFilename(post.title ?? post.hook ?? 'post', post.mediaType))
       toast({
         title: result === 'downloaded' ? 'Download started' : 'Opened in a new tab',
         description: result === 'downloaded' ? undefined : 'The file could not be fetched directly.',
@@ -246,14 +321,14 @@ export default function Library() {
   )
 
   const handleDownloadBank = useCallback(
-    async (item: MediaBankItem, url: string | null) => {
-      if (!url) {
+    async (item: MediaBankItem) => {
+      if (!item.fileUrl) {
         toast({ title: 'Media is still loading', variant: 'warning' })
         return
       }
       setDownloadingId(item.id)
       try {
-        const result = await downloadFile(url, slugFilename(item.name, item.mediaType))
+        const result = await downloadFile(item.fileUrl, slugFilename(item.name, item.mediaType))
         toast({ title: result === 'downloaded' ? 'Download started' : 'Opened in a new tab', variant: 'success' })
       } finally {
         setDownloadingId(null)
@@ -265,29 +340,17 @@ export default function Library() {
   const handleUpload = useCallback(
     async (file: File | undefined) => {
       if (!file || !selectedId) return
-      const kind = file.type.startsWith('video/') ? 'video' : 'image'
       if (!file.type.startsWith('image/') && !file.type.startsWith('video/')) {
         toast({ title: 'Please choose a photo or video file', variant: 'warning' })
         return
       }
       setUploading(true)
       try {
-        const id = crypto.randomUUID()
-        await putMediaBlob(id, file)
-        addMediaBankItem(selectedId, {
-          id,
-          name: file.name || `Upload ${new Date().toLocaleDateString()}`,
-          mediaType: kind,
-          blobId: id,
-          size: file.size,
-          status: 'draft',
-          scheduledAt: null,
-          createdAt: new Date().toISOString(),
-        })
-        setBank(listMediaBank(selectedId))
+        const next = await addMediaBankItem(selectedId, { file })
+        setBank((prev) => [next, ...prev])
         toast({ title: 'Added to Media Bank', description: 'Use it later from My Post.', variant: 'success' })
-      } catch {
-        toast({ title: 'Upload failed', variant: 'error' })
+      } catch (e: any) {
+        toast({ title: 'Upload failed', description: String(e?.message ?? ''), variant: 'error' })
       } finally {
         setUploading(false)
       }
@@ -348,7 +411,9 @@ export default function Library() {
 
       {/* My Content — saved feed posts */}
       {tab === 'content' && (
-        visibleSaved.length === 0 ? (
+        loading ? (
+          <EmptyState title="Loading…" body="Fetching your saved posts for this brand." />
+        ) : visibleSaved.length === 0 ? (
           <EmptyState
             title="Nothing here yet"
             body="Save posts from the Content Feed with the Review button and they will appear here."
@@ -364,7 +429,9 @@ export default function Library() {
 
       {/* My Post — own uploads */}
       {tab === 'post' && (
-        myPosts.length === 0 ? (
+        loading ? (
+          <EmptyState title="Loading…" body="Fetching your posts for this brand." />
+        ) : myPosts.length === 0 ? (
           <EmptyState
             title="No posts yet"
             body="Upload photos or videos in My Media Bank and they will show up here as drafts."
@@ -372,7 +439,7 @@ export default function Library() {
         ) : (
           <div className="w-full columns-1 gap-4 @min-[480px]:columns-2 @min-[720px]:columns-3 @min-[1000px]:columns-4 @min-[1280px]:columns-5">
             {myPosts.map((m) => (
-              <BankCard key={m.id} item={m} url={urls[m.id] ?? null} onOpen={() => setSelectedBankId(m.id)} />
+              <BankCard key={m.id} item={m} onOpen={() => setSelectedBankId(m.id)} />
             ))}
           </div>
         )
@@ -399,7 +466,7 @@ export default function Library() {
               {uploading ? 'Uploading…' : 'Upload photo or video'}
             </Button>
             <span className="text-xs text-muted-foreground">
-              {bank.length} {bank.length === 1 ? 'item' : 'items'} stored on this device
+              {bank.length} {bank.length === 1 ? 'item' : 'items'} saved for this brand
             </span>
           </div>
           {bank.length === 0 ? (
@@ -407,14 +474,16 @@ export default function Library() {
           ) : (
             <div className="w-full columns-1 gap-4 @min-[480px]:columns-2 @min-[720px]:columns-3 @min-[1000px]:columns-4 @min-[1280px]:columns-5">
               {bank.map((m) => (
-                <BankCard key={m.id} item={m} url={urls[m.id] ?? null} onOpen={() => setSelectedBankId(m.id)} />
+                <BankCard key={m.id} item={m} onOpen={() => setSelectedBankId(m.id)} />
               ))}
             </div>
           )}
         </div>
       )}
 
-      {/* Detail dialog for the selected saved post */}
+      {/* Detail dialog for the selected saved post — interactive PostContainer
+          (Edit persists layers + replacement to the DB row) plus the Library
+          workflow actions (Download / Schedule / Publish / Draft / Remove). */}
       <LibraryDetailDialog
         open={selectedSaved !== null}
         onOpenChange={(o) => !o && setSelectedSavedId(null)}
@@ -424,13 +493,13 @@ export default function Library() {
         needsAttention={selectedSaved?.needsAttention ?? false}
         scheduledAt={selectedSaved?.scheduledAt ?? null}
         meta={selectedSaved ? `${platformMeta(selectedSaved.platform).label} · ${typeLabel(selectedSaved.contentType) || selectedSaved.contentFormat.replace(/_/g, ' ')}` : ''}
-        media={selectedSaved ? <SavedMedia post={selectedSaved} /> : null}
+        media={selectedSaved ? <SavedPostDetail post={selectedSaved} onApplyEdit={(p) => persistSavedEdit(selectedSaved, p)} /> : null}
         downloading={selectedSaved ? downloadingId === selectedSaved.id : false}
-        canDownload={!!selectedSaved?.visualUrl}
+        canDownload={!!selectedSaved && !!savedPostSrc(selectedSaved)}
         onDownload={() => selectedSaved && void handleDownloadSaved(selectedSaved)}
-        onSchedule={(iso) => selectedSaved && patchSaved(selectedSaved.contentId, { status: 'scheduled', scheduledAt: iso }, 'Scheduled')}
-        onPublish={() => selectedSaved && patchSaved(selectedSaved.contentId, { status: 'published', scheduledAt: null }, 'Marked as published')}
-        onDraft={() => selectedSaved && patchSaved(selectedSaved.contentId, { status: 'draft', scheduledAt: null }, 'Moved to drafts')}
+        onSchedule={(iso) => selectedSaved && patchSaved(selectedSaved.id, { status: 'scheduled', scheduledAt: iso }, 'Scheduled')}
+        onPublish={() => selectedSaved && patchSaved(selectedSaved.id, { status: 'published', scheduledAt: null }, 'Marked as published')}
+        onDraft={() => selectedSaved && patchSaved(selectedSaved.id, { status: 'draft', scheduledAt: null }, 'Moved to drafts')}
         onRemove={() => selectedSaved && removeSaved(selectedSaved)}
       />
 
@@ -443,10 +512,10 @@ export default function Library() {
         status={selectedBank?.status ?? 'draft'}
         scheduledAt={selectedBank?.scheduledAt ?? null}
         meta={selectedBank ? `${selectedBank.mediaType === 'video' ? 'Video' : 'Image'} · ${(selectedBank.size / 1024 / 1024).toFixed(1)} MB` : ''}
-        media={selectedBank ? <BankMedia item={selectedBank} url={urls[selectedBank.id] ?? null} /> : null}
+        media={selectedBank ? <BankMediaDetail item={selectedBank} onApplyEdit={(p) => persistBankEdit(selectedBank, p)} /> : null}
         downloading={selectedBank ? downloadingId === selectedBank.id : false}
-        canDownload={!!selectedBank && !!urls[selectedBank.id]}
-        onDownload={() => selectedBank && void handleDownloadBank(selectedBank, urls[selectedBank.id] ?? null)}
+        canDownload={!!selectedBank?.fileUrl}
+        onDownload={() => selectedBank && void handleDownloadBank(selectedBank)}
         onSchedule={(iso) => selectedBank && patchBank(selectedBank.id, { status: 'scheduled', scheduledAt: iso }, 'Scheduled')}
         onPublish={() => selectedBank && patchBank(selectedBank.id, { status: 'published', scheduledAt: null }, 'Marked as published')}
         onDraft={() => selectedBank && patchBank(selectedBank.id, { status: 'draft', scheduledAt: null }, 'Moved to drafts')}
@@ -495,57 +564,94 @@ function CardButton({ label, onOpen, children }: { label: string; onOpen: () => 
 }
 
 function SavedMedia({ post }: { post: SavedPost }) {
-  // Same layout numbers as the Content Feed card: phone-capped width,
+  // Same reusable media box as the Content Feed card: phone-capped width,
   // content-fitted aspect from the saved snapshot, contain-fit full frame,
   // and the same overlay engine — so text size/position match the feed.
+  // ponytail: postSourceFromSavedPost runs per render — cheap object build,
+  // no memo needed; PostMediaContainer owns measured aspect internally.
+  const source = postSourceFromSavedPost(post)
+  const isMeme = post.contentFormat === 'meme'
   return (
     <div className="mx-auto w-full max-w-[24rem]">
-      <div className="relative w-full bg-black" style={{ aspectRatio: post.aspect ?? 4 / 5 }}>
-        {post.visualUrl ? (
-          post.mediaType === 'video' ? (
-            <video src={post.visualUrl} poster={post.posterUrl ?? undefined} muted loop playsInline preload="metadata" className="h-full w-full object-contain" />
-          ) : (
-            <img src={post.visualUrl} alt={post.hook ?? 'Saved visual'} loading="lazy" className="h-full w-full object-contain" />
-          )
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-xs text-white/50">No visual</div>
-        )}
-        {/* Saved overlay text — same layers, size and position as the feed. */}
-        {post.visualUrl && post.blocks.length > 0 && (
-          <MediaTextOverlay
-            blocks={post.blocks}
-            selectedId={null}
-            draggable={false}
-            allowInlineEdit={false}
-            onSelect={() => {}}
-            onPatch={() => {}}
-          />
-        )}
-        {/* Layer 3: saved meme GIF overlay — same position as the feed. */}
-        {post.contentFormat === 'meme' && post.visualUrl && post.memeUrl && (
-          <MemeGifOverlay
-            src={post.memeUrl}
-            alt={post.hook ?? 'Meme overlay'}
-            layer={post.gifLayer ?? DEFAULT_MEME_GIF_LAYER}
-          />
-        )}
-      </div>
+      <PostMediaContainer
+        src={source.visualUrl}
+        poster={source.posterUrl}
+        alt={source.altText ?? undefined}
+        mediaType={source.mediaType}
+        aspect={source.aspect}
+        resetKey={source.key}
+        blocks={source.initialBlocks ?? []}
+        gifLayer={source.initialGifLayer}
+        memeSrc={isMeme ? source.memeUrl : null}
+        memeAlt={post.hook ?? 'Meme overlay'}
+        visualStatus={source.visualStatus}
+        framed={false}
+        className="w-full"
+      />
     </div>
   )
 }
 
-function BankMedia({ item, url }: { item: MediaBankItem; url: string | null }) {
+function SavedPostDetail({
+  post,
+  onApplyEdit,
+}: {
+  post: SavedPost
+  onApplyEdit: (patch: { blocks: SavedPost['blocks']; gifLayer: SavedPost['gifLayer']; aspect: number | null; url: string | null; kind: 'image' | 'video' }) => void
+}) {
   return (
-    <div className="relative aspect-[4/5] w-full bg-black">
-      {url ? (
-        item.mediaType === 'video' ? (
-          <video src={url} muted loop playsInline preload="metadata" className="h-full w-full object-cover" />
-        ) : (
-          <img src={url} alt={item.name} loading="lazy" className="h-full w-full object-cover" />
-        )
-      ) : (
-        <div className="flex h-full w-full items-center justify-center text-xs text-white/50">Loading…</div>
-      )}
+    <div className="mx-auto w-full max-w-[24rem]">
+      <PostContainer
+        key={post.id}
+        source={postSourceFromSavedPost(post)}
+        showPills={false}
+        showReject={false}
+        onApplyEdit={onApplyEdit}
+        className="max-w-none"
+      />
+    </div>
+  )
+}
+
+function BankMedia({ item }: { item: MediaBankItem }) {
+  // Same reusable media box as the feed card — bank uploads render through
+  // the identical width/aspect/overlay pipeline via postSourceFromBankItem.
+  const source = postSourceFromBankItem(item)
+  return (
+    <div className="mx-auto w-full max-w-[24rem]">
+      <PostMediaContainer
+        src={source.visualUrl}
+        alt={source.altText ?? undefined}
+        mediaType={source.mediaType}
+        aspect={source.aspect}
+        resetKey={source.key}
+        blocks={source.initialBlocks ?? []}
+        gifLayer={source.initialGifLayer}
+        visualStatus={source.visualStatus}
+        framed={false}
+        className="w-full"
+      />
+    </div>
+  )
+}
+
+function BankMediaDetail({
+  item,
+  onApplyEdit,
+}: {
+  item: MediaBankItem
+  onApplyEdit: (patch: { blocks: MediaBankItem['blocks']; gifLayer: MediaBankItem['gifLayer']; aspect: number | null; url: string | null; kind: 'image' | 'video' }) => void
+}) {
+  return (
+    <div className="mx-auto w-full max-w-[24rem]">
+      <PostContainer
+        key={item.id}
+        source={postSourceFromBankItem(item)}
+        showPills={false}
+        showReject={false}
+        onApplyEdit={onApplyEdit}
+        className="max-w-none"
+      />
     </div>
   )
 }
@@ -596,10 +702,10 @@ function SavedCard({ post, onOpen }: { post: SavedPost; onOpen: () => void }) {
   )
 }
 
-function BankCard({ item, url, onOpen }: { item: MediaBankItem; url: string | null; onOpen: () => void }) {
+function BankCard({ item, onOpen }: { item: MediaBankItem; onOpen: () => void }) {
   return (
     <CardButton label={`Open ${item.name}`} onOpen={onOpen}>
-      <BankMedia item={item} url={url} />
+      <BankMedia item={item} />
       <CardInfo
         status={item.status}
         title={item.name}

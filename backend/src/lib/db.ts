@@ -169,5 +169,59 @@ try {
     PRIMARY KEY (company_id, date)
   )`);
 } catch {}
+// ponytail: lazy create — idempotent with the 0017 migration (DB-backed Library).
+// Saved feed posts + media-bank uploads, scoped by (user, brand/company).
+try {
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS library_post (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    company_id TEXT NOT NULL,
+    content_id TEXT NOT NULL,
+    title TEXT,
+    hook TEXT,
+    body TEXT,
+    platform TEXT NOT NULL DEFAULT 'instagram',
+    content_format TEXT NOT NULL DEFAULT '',
+    content_type TEXT NOT NULL DEFAULT '',
+    visual_url TEXT,
+    media_type TEXT NOT NULL DEFAULT 'image',
+    poster_url TEXT,
+    blocks TEXT NOT NULL DEFAULT '[]',
+    gif_layer TEXT,
+    meme_url TEXT,
+    aspect TEXT,
+    edited_file TEXT,
+    edited_media_type TEXT,
+    needs_attention TEXT NOT NULL DEFAULT '0',
+    status TEXT NOT NULL DEFAULT 'draft',
+    scheduled_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`);
+  sqlite.exec("CREATE INDEX IF NOT EXISTS idx_library_post_user ON library_post (user_id)");
+  sqlite.exec("CREATE INDEX IF NOT EXISTS idx_library_post_company ON library_post (company_id)");
+  sqlite.exec("CREATE INDEX IF NOT EXISTS idx_library_post_company_status ON library_post (company_id, status)");
+  sqlite.exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_library_post_company_content ON library_post (company_id, content_id)");
+  sqlite.exec(`CREATE TABLE IF NOT EXISTS library_media (
+    id TEXT PRIMARY KEY NOT NULL,
+    user_id TEXT NOT NULL,
+    company_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    media_type TEXT NOT NULL DEFAULT 'image',
+    file_url TEXT,
+    size TEXT NOT NULL DEFAULT '0',
+    blocks TEXT NOT NULL DEFAULT '[]',
+    gif_layer TEXT,
+    meme_url TEXT,
+    aspect TEXT,
+    status TEXT NOT NULL DEFAULT 'draft',
+    scheduled_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+  )`);
+  sqlite.exec("CREATE INDEX IF NOT EXISTS idx_library_media_user ON library_media (user_id)");
+  sqlite.exec("CREATE INDEX IF NOT EXISTS idx_library_media_company ON library_media (company_id)");
+  sqlite.exec("CREATE INDEX IF NOT EXISTS idx_library_media_company_status ON library_media (company_id, status)");
+} catch {}
 
 export const db = drizzle(sqlite, { schema });

@@ -505,6 +505,85 @@ export const instagramScrapeJobs = sqliteTable(
   ],
 );
 
+// ponytail: Library — DB-backed saved posts + media bank, scoped by (user, brand).
+// brandId === companyId; ownership enforced in queries via the parent company row.
+// Overlay layers (blocks/gifLayer) stored as JSON text; aspect + size as TEXT like
+// the rest of the sqlite schema (numbers-as-text convention). Edited replacements
+// and uploads live under data/media via edited_file / file_url (/media/files/...).
+export const libraryPosts = sqliteTable(
+  "library_post",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull(),
+    companyId: text("company_id").notNull(),
+    contentId: text("content_id").notNull(),
+    title: text("title"),
+    hook: text("hook"),
+    body: text("body"),
+    platform: text("platform").notNull().default("instagram"),
+    contentFormat: text("content_format").notNull().default(""),
+    contentType: text("content_type").notNull().default(""),
+    visualUrl: text("visual_url"),
+    mediaType: text("media_type").notNull().default("image"),
+    posterUrl: text("poster_url"),
+    blocks: text("blocks").notNull().default("[]"),
+    gifLayer: text("gif_layer"),
+    memeUrl: text("meme_url"),
+    aspect: text("aspect"),
+    editedFile: text("edited_file"),
+    editedMediaType: text("edited_media_type"),
+    needsAttention: text("needs_attention").notNull().default("0"),
+    status: text("status").notNull().default("draft"),
+    scheduledAt: text("scheduled_at"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    index("idx_library_post_user").on(t.userId),
+    index("idx_library_post_company").on(t.companyId),
+    index("idx_library_post_company_status").on(t.companyId, t.status),
+    uniqueIndex("uq_library_post_company_content").on(t.companyId, t.contentId),
+  ],
+);
+
+export const libraryMedia = sqliteTable(
+  "library_media",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id").notNull(),
+    companyId: text("company_id").notNull(),
+    name: text("name").notNull(),
+    mediaType: text("media_type").notNull().default("image"),
+    fileUrl: text("file_url"),
+    size: text("size").notNull().default("0"),
+    blocks: text("blocks").notNull().default("[]"),
+    gifLayer: text("gif_layer"),
+    memeUrl: text("meme_url"),
+    aspect: text("aspect"),
+    status: text("status").notNull().default("draft"),
+    scheduledAt: text("scheduled_at"),
+    createdAt: text("created_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+    updatedAt: text("updated_at")
+      .notNull()
+      .$defaultFn(() => new Date().toISOString()),
+  },
+  (t) => [
+    index("idx_library_media_user").on(t.userId),
+    index("idx_library_media_company").on(t.companyId),
+    index("idx_library_media_company_status").on(t.companyId, t.status),
+  ],
+);
+
 export type SocialCredential = typeof socialCredentials.$inferSelect;
 export type InstagramSource = typeof instagramSources.$inferSelect;
 export type InstagramPost = typeof instagramPosts.$inferSelect;
@@ -575,3 +654,7 @@ export type NewVisualAsset = typeof visualAssets.$inferInsert;
 export type VisualSearchBatch = typeof visualSearchBatches.$inferSelect;
 export type VisualFeedDaily = typeof visualFeedDaily.$inferSelect;
 export type ContentTemplate = typeof contentTemplates.$inferSelect;
+export type LibraryPost = typeof libraryPosts.$inferSelect;
+export type NewLibraryPost = typeof libraryPosts.$inferInsert;
+export type LibraryMedia = typeof libraryMedia.$inferSelect;
+export type NewLibraryMedia = typeof libraryMedia.$inferInsert;
