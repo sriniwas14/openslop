@@ -1,5 +1,5 @@
 import { type FeedItem } from '@/services/visual'
-import PostContainer, { postSourceFromFeedItem } from '@/components/feed/PostContainer'
+import PostContainer, { postSourceFromFeedItem, type PostReviewSnapshot } from '@/components/feed/PostContainer'
 
 // ---------------------------------------------------------------------------
 // Feed card — thin wrapper over PostContainer. The post source adapter owns
@@ -11,8 +11,35 @@ type Props = {
   item: FeedItem
   isActive: boolean
   index: number
+  onSkip?: () => void
+  onReviewPress?: (snapshot: PostReviewSnapshot) => void
+  reviewActionRef?: { current: (() => void) | null }
+  /** Peek rendering behind the active card — media only, no action buttons. */
+  showActions?: boolean
+  /** Peek rendering — hide the top stickers so they never double behind the
+   *  active card's sticker row. */
+  showPills?: boolean
 }
 
-export default function ContentFeedItem({ item, isActive }: Props) {
-  return <PostContainer source={postSourceFromFeedItem(item)} isActive={isActive} memeActive={isActive} />
+export default function ContentFeedItem({
+  item,
+  isActive,
+  onSkip,
+  onReviewPress,
+  reviewActionRef,
+  showActions,
+  showPills,
+}: Props) {
+  return (
+    <PostContainer
+      source={postSourceFromFeedItem(item)}
+      isActive={isActive}
+      memeActive={isActive}
+      onSkip={onSkip}
+      onReviewPress={onReviewPress}
+      reviewActionRef={reviewActionRef}
+      showActions={showActions}
+      showPills={showPills}
+    />
+  )
 }

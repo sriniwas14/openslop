@@ -1,14 +1,29 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { useCompany } from '@/context/CompanyContext'
 import { useContentFeed } from '@/hooks/useContentFeed'
 import ContentFeedItem from '@/components/feed/ContentFeedItem'
 import FeedSkeleton from '@/components/feed/FeedSkeleton'
+import ReviewDialog from '@/components/feed/ReviewDialog'
+import { PostMediaContainer, resolveMediaType, type PostReviewSnapshot } from '@/components/feed/PostContainer'
+import { visualSrc } from '@/services/visual'
 import { FeedEmptyState, FeedErrorState, DailyCompleteState } from '@/components/feed/FeedStates'
 
 // ---------------------------------------------------------------------------
-// Content Feed — Instagram-style vertical feed over the brand's generated
-// content + matched visual assets. Lives inside the normal dashboard layout
-// (sidebar + topbar retained); the user simply scrolls the main column.
+// Content Feed — single-card deck over the brand's generated content +
+// matched visual assets. Lives inside the normal dashboard layout (sidebar +
+// topbar retained); one focused card at a time.
+//
+// Deliberately simple: every action swaps the card with a short crossfade —
+// no drag, no fly-off, no rotation.
+//
+//   X button / ArrowLeft       → skip (advance only, no side effect)
+//   check button / ArrowRight  → advance + open the Review dialog for the
+//     post (save in Library or share — the existing ReviewDialog, rendered
+//     at deck level so it survives the card underneath changing)
+//
+// The deck pointer is the hook's activeIndex, so batched prefetch + visual
+// polling keep working untouched. Only the active card's video autoplays.
 // ---------------------------------------------------------------------------
 
 export default function ContentFeed() {
@@ -27,57 +42,71 @@ export default function ContentFeed() {
     retry,
   } = useContentFeed(selectedId)
 
-  const containerRef = useRef<HTMLDivElement>(null)
-  // mirror for the observer callback so it only reports genuine index changes
-  // without re-subscribing on every scroll step
-  const activeRef = useRef(activeIndex)
+  // Review inputs for the swiped post — handed up by the active card.
+  const [review, setReview] = useState<PostReviewSnapshot | null>(null)
+  // Lets ArrowRight trigger the active card's check button.
+  const reviewActionRef = useRef<(() => void) | null>(null)
+
+  const clampedIndex = items.length === 0 ? 0 : Math.min(activeIndex, items.length - 1)
+  const activeItem = items.length === 0 ? null : items[clampedIndex]
+  const nextItem = items.length === 0 ? null : (items[clampedIndex + 1] ?? null)
+  const isLast = items.length > 0 && clampedIndex >= items.length - 1
+
+  // "Up next" rail inputs — media-only thumbnail of the following post.
+  const nextSrc = nextItem ? visualSrc(nextItem.visual) : null
+  const nextMediaType = nextItem
+    ? resolveMediaType({
+        explicitKind: nextItem.visual?.mediaType ?? null,
+        src: nextSrc,
+        contentFormat: nextItem.content.contentFormat,
+      })
+    : 'image'
+  const nextTitle = nextItem ? (nextItem.content.hook ?? nextItem.content.title ?? 'Untitled') : ''
+
+  const goNext = useCallback(() => {
+    setActiveIndex(Math.min(clampedIndex + 1, Math.max(items.length - 1, 0)))
+  }, [clampedIndex, items.length, setActiveIndex])
+
+  const handleReviewPress = useCallback(
+    (snapshot: PostReviewSnapshot) => {
+      goNext()
+      setReview(snapshot)
+    },
+    [goNext],
+  )
+
+  // keyboard parity for the two deck buttons (no vertical list to scroll)
+  const goNextRef = useRef(goNext)
   useEffect(() => {
-    activeRef.current = activeIndex
-  }, [activeIndex])
-
-  // -----------------------------------------------------------------------
-  // IntersectionObserver — track the most visible item to drive video autoplay.
-  // Single 0.5 threshold + change check: fires once per item, never a jitter
-  // stream that would re-trigger the feed prefetch.
-  // -----------------------------------------------------------------------
+    goNextRef.current = goNext
+  }, [goNext])
+  const reviewOpenRef = useRef(false)
   useEffect(() => {
-    const container = containerRef.current
-    if (!container) return
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        let bestIndex = -1
-        let bestRatio = 0
-        for (const entry of entries) {
-          const idx = Number((entry.target as HTMLElement).dataset.feedIndex)
-          if (Number.isNaN(idx)) continue
-          if (entry.isIntersecting && entry.intersectionRatio > bestRatio) {
-            bestRatio = entry.intersectionRatio
-            bestIndex = idx
-          }
-        }
-        if (bestIndex >= 0 && bestRatio >= 0.5 && bestIndex !== activeRef.current) {
-          setActiveIndex(bestIndex)
-        }
-      },
-      { root: null, threshold: 0.5 },
-    )
-
-    const itemsEls = container.querySelectorAll<HTMLElement>('[data-feed-index]')
-    itemsEls.forEach((el) => observer.observe(el))
-
-    return () => {
-      itemsEls.forEach((el) => observer.unobserve(el))
-      observer.disconnect()
+    reviewOpenRef.current = review !== null
+  }, [review])
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const el = e.target as HTMLElement | null
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return
+      if (reviewOpenRef.current) return
+      if (e.key === 'ArrowLeft') {
+        e.preventDefault()
+        goNextRef.current()
+      } else if (e.key === 'ArrowRight') {
+        e.preventDefault()
+        reviewActionRef.current?.()
+      }
     }
-  }, [items.length, setActiveIndex])
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // -----------------------------------------------------------------------
   // Initial skeleton state
   // -----------------------------------------------------------------------
   if (bootstrapping && items.length === 0) {
     return (
-      <div ref={containerRef}>
+      <div>
         <FeedSkeleton />
       </div>
     )
@@ -88,7 +117,7 @@ export default function ContentFeed() {
   // -----------------------------------------------------------------------
   if (error && items.length === 0) {
     return (
-      <div ref={containerRef}>
+      <div>
         <FeedErrorState message={error} onRetry={retry} />
       </div>
     )
@@ -99,33 +128,91 @@ export default function ContentFeed() {
   // -----------------------------------------------------------------------
   if (!bootstrapping && items.length === 0 && !preparing) {
     return (
-      <div ref={containerRef}>
+      <div>
         <FeedEmptyState onReload={reload} />
       </div>
     )
   }
 
   return (
-    <div className="mx-auto flex w-full max-w-xl flex-col gap-6 px-4 py-4 sm:py-6" ref={containerRef}>
-      {items.map((item, idx) => (
-        <div
-          key={item.content.id}
-          data-feed-index={idx}
-          role="article"
-          aria-posinset={idx + 1}
-          aria-setsize={hasMore ? -1 : items.length}
-          aria-label={`Post ${idx + 1}: ${item.content.hook ?? item.content.title ?? 'Untitled'}`}
-        >
-          <ContentFeedItem item={item} isActive={idx === activeIndex} index={idx} />
-        </div>
-      ))}
-
-      {/* Daily complete sentinel */}
-      {dailyComplete && hasMore === false && items.length > 0 && (
-        <DailyCompleteState daily={daily} />
+    <div
+      className="mx-auto flex w-full max-w-4xl items-start justify-center gap-6 px-4 py-4 sm:py-6"
+      role="region"
+      aria-roledescription="carousel"
+      aria-label="Content deck"
+    >
+      <div className="flex w-full max-w-xl min-w-0 flex-col items-center gap-3">
+      {/* Deck position */}
+      {items.length > 0 && (
+        <p className="text-xs font-medium text-muted-foreground" aria-live="polite">
+          Card {clampedIndex + 1} of {items.length}
+          {hasMore ? '+' : ''}
+        </p>
       )}
 
-      {/* Error at end of feed */}
+      {/* Active card — the only card in the main column; nothing stacks
+          behind or overlaps the image. */}
+      {activeItem && (
+        <div className="relative w-full" aria-live="polite">
+          <div className="relative">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={activeItem.content.id}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18 }}
+              >
+                <ContentFeedItem
+                  item={activeItem}
+                  isActive
+                  index={clampedIndex}
+                  onSkip={goNext}
+                  onReviewPress={handleReviewPress}
+                  reviewActionRef={reviewActionRef}
+                />
+              </motion.div>
+            </AnimatePresence>
+          </div>
+        </div>
+      )}
+
+      {/* Deck-level Review popup for the swiped post — save to Library or share */}
+      <ReviewDialog
+        open={review !== null}
+        onOpenChange={(open) => {
+          if (!open) setReview(null)
+        }}
+        item={review?.item ?? null}
+        visualUrl={review?.visualUrl ?? null}
+        mediaType={review?.mediaType ?? 'image'}
+        blocks={review?.blocks ?? []}
+        aspect={review?.aspect ?? null}
+        gifLayer={review?.gifLayer ?? undefined}
+      />
+
+      {/* End of deck */}
+      {isLast && !hasMore && (
+        <div className="w-full">
+          {dailyComplete ? (
+            <DailyCompleteState daily={daily} />
+          ) : (
+            <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed bg-card px-6 py-8 text-center">
+              <p className="text-sm font-semibold">You've reached the end of the deck</p>
+              <p className="text-xs text-muted-foreground">Swipe through again or reload for fresh posts.</p>
+              <button
+                type="button"
+                onClick={() => setActiveIndex(0)}
+                className="rounded-full bg-muted px-4 py-2 text-sm font-medium transition-colors hover:bg-muted/70"
+              >
+                Back to the first card
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Error at end of deck */}
       {error && items.length > 0 && (
         <div className="flex items-center justify-center py-4">
           <button
@@ -146,6 +233,27 @@ export default function ContentFeed() {
             Preparing more visuals…
           </div>
         </div>
+      )}
+      </div>
+
+      {/* "Up next" side rail — desktop only. A static media-only thumbnail
+          pinned beside the card, never overlapping the image. Hidden on
+          mobile and when there is no following post. */}
+      {nextItem && (
+        <aside aria-label="Up next" className="sticky top-6 hidden w-44 shrink-0 lg:block">
+          <p className="mb-2 text-[11px] font-bold tracking-wider text-muted-foreground uppercase">Up next</p>
+          <PostMediaContainer
+            src={nextSrc}
+            poster={nextItem.visual?.posterUrl ?? nextItem.visual?.previewUrl ?? null}
+            alt={nextTitle}
+            mediaType={nextMediaType}
+            resetKey={nextItem.content.id}
+            visualStatus={nextItem.visualStatus}
+            isActive={false}
+            memeActive={false}
+          />
+          <p className="mt-2 line-clamp-2 text-xs font-medium text-muted-foreground">{nextTitle}</p>
+        </aside>
       )}
     </div>
   )

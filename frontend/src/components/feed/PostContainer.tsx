@@ -95,6 +95,17 @@ export type PostSource = {
   feedItem?: FeedItem | null
 }
 
+/** Frozen review inputs for the deck-level Review dialog — pulled from the
+ *  swiped card after its fly-off animation. */
+export type PostReviewSnapshot = {
+  item: FeedItem
+  visualUrl: string | null
+  mediaType: PostMediaType
+  blocks: OverlayBlock[]
+  aspect: number | null
+  gifLayer?: MemeGifLayer | null
+}
+
 function emptyContentDoc(overrides: Partial<GeneratedContentDoc> & Pick<GeneratedContentDoc, 'id' | 'platform' | 'contentFormat' | 'contentType'>): GeneratedContentDoc {
   return {
     userId: '',
@@ -412,11 +423,21 @@ type PostContainerProps = {
    *  dialogs leave the default so their single visible post keeps playing. */
   memeActive?: boolean
   showPills?: boolean
-  /** Action row (Reject/Edit/Review). Review renders only with a feedItem
+  /** Action row (Skip/Edit/Review). Review renders only with a feedItem
    *  or an onReview handler. */
   showActions?: boolean
-  /** Library detail: Edit + schedule actions live in the dialog — hide Reject. */
+  /** Library detail: Edit + schedule actions live in the dialog — hide Skip. */
   showReject?: boolean
+  /** Deck skip — the X button advances without any reject side effect
+   *  (no toast). Falls back to the legacy reject toast only when neither
+   *  this nor onReject is provided. */
+  onSkip?: () => void
+  /** Deck review — the check button hands the card's live layers up so the
+   *  deck can open its Review dialog. Used only by the feed; every other
+   *  surface keeps the direct handlers below. */
+  onReviewPress?: (snapshot: PostReviewSnapshot) => void
+  /** Lets the deck trigger the check button (arrow keys). */
+  reviewActionRef?: { current: (() => void) | null }
   onReject?: () => void
   onReview?: () => void
   /** Persist hook for DB-backed surfaces (Library) — called on editor Done
@@ -432,6 +453,9 @@ export function PostContainer({
   showPills = true,
   showActions = true,
   showReject = true,
+  onSkip,
+  onReviewPress,
+  reviewActionRef,
   onReject,
   onReview,
   onApplyEdit,
@@ -504,21 +528,18 @@ export function PostContainer({
     openEditor(blocks[0]?.id ?? null)
   }, [blocks, openEditor])
 
-  const handleReject = useCallback(() => {
+  const handleSkip = useCallback(() => {
+    // Deck X button: advance only, no side effect.
+    if (onSkip) {
+      onSkip()
+      return
+    }
     if (onReject) {
       onReject()
       return
     }
     toast({ title: 'Rejected', description: 'This post was marked as rejected.', variant: 'default' })
-  }, [onReject, toast])
-
-  const handleReview = useCallback(() => {
-    if (onReview) {
-      onReview()
-      return
-    }
-    setReviewOpen(true)
-  }, [onReview])
+  }, [onSkip, onReject, toast])
 
   const applyEditor = useCallback((nextBlocks: OverlayBlock[], nextUrl: string | null, nextKind: 'image' | 'video', nextGif?: MemeGifLayer) => {
     setBlocks(nextBlocks)
@@ -545,15 +566,50 @@ export function PostContainer({
   const campaignPill = `${platform.label} · ${formatLabel(content.contentFormat)}`
   const showReviewAction = !!source.feedItem || !!onReview
 
+  // Deck review — the check button freezes the card's live layers and hands
+  // them to the deck, which advances and opens its Review dialog.
+  const getSnapshot = useCallback((): PostReviewSnapshot | null => {
+    if (!source.feedItem) return null
+    return {
+      item: source.feedItem,
+      visualUrl: displaySrc,
+      mediaType: isVideo ? 'video' : 'image',
+      blocks,
+      aspect: fittedAspect,
+      gifLayer: isMeme ? gifLayer : undefined,
+    }
+  }, [source.feedItem, displaySrc, isVideo, blocks, fittedAspect, isMeme, gifLayer])
+
+  const handleReview = useCallback(() => {
+    const snapshot = getSnapshot()
+    if (snapshot && onReviewPress) {
+      onReviewPress(snapshot)
+      return
+    }
+    if (onReview) {
+      onReview()
+      return
+    }
+    setReviewOpen(true)
+  }, [getSnapshot, onReviewPress, onReview])
+
+  // Lets the deck trigger the check button (arrow keys).
+  useEffect(() => {
+    if (!reviewActionRef) return
+    reviewActionRef.current = handleReview
+  })
+
   return (
     <article className={cn('mx-auto flex w-full max-w-lg flex-col items-center gap-3 sm:gap-4', className)}>
-      {/* Top context pills — dynamic, from existing content data */}
+      {/* Top context stickers — sticker-pack badges: thick borders, hard
+          offset shadows, slight tilts, loud uppercase type. Dynamic labels
+          from existing content data; look only, no behavior. */}
       {showPills && (
-        <div className="flex flex-wrap items-center justify-center gap-2" aria-label="Post context">
-          <span className="inline-flex items-center rounded-full border border-transparent bg-muted px-3 py-1 text-xs font-medium text-foreground">
+        <div className="flex flex-wrap items-center justify-center gap-2.5" aria-label="Post context">
+          <span className="-rotate-2 inline-flex items-center rounded-full border-2 border-foreground bg-foreground px-3.5 py-1.5 text-[11px] font-extrabold tracking-wider text-background uppercase shadow-[3px_3px_0_0_var(--color-foreground)]">
             {typePill}
           </span>
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+          <span className="inline-flex rotate-1 items-center gap-1.5 rounded-full border-2 border-primary/60 bg-primary/15 px-3.5 py-1.5 text-[11px] font-extrabold tracking-wider text-primary uppercase shadow-[3px_3px_0_0_var(--color-primary)]">
             <span className={cn('size-1.5 rounded-full', platform.dot)} aria-hidden />
             {campaignPill}
           </span>
@@ -583,26 +639,30 @@ export function PostContainer({
         onAspectChange={setFittedAspect}
       />
 
-      {/* Action row — completely outside the media, underneath the post */}
+      {/* Action row — one flat, center-aligned row: tinted Skip circle /
+          Edit pill / tinted Review circle, fully outside the media. Skip
+          advances only; Review hands the card to the deck dialog. */}
       {showActions && (
-        <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3" role="group" aria-label="Review actions">
+        <div className="flex items-center justify-center gap-5" role="group" aria-label="Review actions">
           {showReject && (
             <Button
               type="button"
               variant="outline"
-              onClick={handleReject}
-              className="h-10 rounded-full border-destructive/30 bg-white px-4 text-destructive shadow-sm hover:bg-destructive/10 hover:text-destructive sm:px-5 dark:bg-card"
-              aria-label="Reject post"
+              size="icon"
+              onClick={handleSkip}
+              className="size-14 rounded-full border-destructive/30 bg-destructive/[0.07] shadow-md transition hover:bg-destructive/15 hover:shadow-lg active:scale-95 dark:bg-card"
+              aria-label="Skip post"
+              title="Skip (←)"
             >
-              <X className="size-4 text-destructive" data-icon="inline-start" />
-              Reject
+              <X className="size-7 text-destructive" />
             </Button>
           )}
           <Button
             type="button"
             variant="outline"
+            size="lg"
             onClick={handleEdit}
-            className="h-10 rounded-full bg-white px-4 shadow-sm sm:px-5 dark:bg-card"
+            className="h-11 rounded-full px-7 shadow-md transition active:scale-95 dark:bg-card"
             aria-label="Edit post"
           >
             <Pencil className="size-4" data-icon="inline-start" />
@@ -611,12 +671,14 @@ export function PostContainer({
           {showReviewAction && (
             <Button
               type="button"
+              variant="outline"
+              size="icon"
               onClick={handleReview}
-              className="h-10 rounded-full border-transparent bg-success px-4 text-white shadow-sm hover:bg-success/90 sm:px-5"
+              className="size-14 rounded-full border-success/30 bg-success/[0.07] shadow-md transition hover:bg-success/15 hover:shadow-lg active:scale-95 dark:bg-card"
               aria-label="Review post"
+              title="Review (→)"
             >
-              <Check className="size-4" data-icon="inline-start" />
-              Review
+              <Check className="size-7 text-success" />
             </Button>
           )}
         </div>
