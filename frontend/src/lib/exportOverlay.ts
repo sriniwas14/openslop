@@ -1,6 +1,7 @@
 import type { OverlayBlock } from '@/components/feed/MediaTextOverlay'
 import { computeOverlayLayout, HIGHLIGHT, MEME_GIF_COMPOSITION } from '@/components/feed/overlayConfig'
 import { isMemeVideoSrc, type MemeGifLayer } from '@/components/feed/MemeGifOverlay'
+import { keyImageData } from '@/lib/chroma'
 import { proxiedMediaUrl } from '@/lib/utils'
 
 // ---------------------------------------------------------------------------
@@ -19,7 +20,8 @@ import { proxiedMediaUrl } from '@/lib/utils'
 // Meme posts additionally bake Layer 3 (GIF first frame, or the video
 // meme's current frame — animated GIF/video cannot survive a PNG export,
 // so the still frame is the documented fallback), composited UNDER the
-// text like the live preview.
+// text like the live preview. Video memes bake chroma-keyed (green removed,
+// same CHROMA_KEY defaults as the feed) so exports match the preview.
 // ---------------------------------------------------------------------------
 
 export type ExportFormatId = '9:16' | '1:1' | '4:5'
@@ -166,6 +168,18 @@ function paintBlocks(ctx: CanvasRenderingContext2D, blocks: OverlayBlock[], W: n
   }
 }
 
+/** Key green out of a scratch canvas in place (export path, CPU mirror of the WebGL preview). */
+function keyCanvasInPlace(canvas: HTMLCanvasElement): void {
+  const w = canvas.width
+  const h = canvas.height
+  if (!w || !h) return
+  const c = canvas.getContext('2d', { willReadFrequently: true })
+  if (!c) return
+  const img = c.getImageData(0, 0, w, h)
+  keyImageData(img)
+  c.putImageData(img, 0, 0)
+}
+
 /** Paint the Layer 3 meme (GIF first frame or video current frame) at its composition position. */
 function paintGifLayer(
   ctx: CanvasRenderingContext2D,
@@ -173,6 +187,10 @@ function paintGifLayer(
   gifLayer: MemeGifLayer | null | undefined,
   W: number,
   H: number,
+  /** True for video memes: key green out so baked exports match the feed. */
+  key = false,
+  /** Reused scratch canvas (video exports pass one to avoid per-frame allocs). */
+  scratch?: HTMLCanvasElement,
 ) {
   const gw = gif instanceof HTMLVideoElement ? gif.videoWidth : gif.naturalWidth
   const gh = gif instanceof HTMLVideoElement ? gif.videoHeight : gif.naturalHeight
@@ -190,7 +208,22 @@ function paintGifLayer(
   }
   const cx = (layer.x / 100) * W
   const cy = (layer.y / 100) * H
-  ctx.drawImage(gif, cx - dw / 2, cy - dh / 2, dw, dh)
+  if (!key) {
+    ctx.drawImage(gif, cx - dw / 2, cy - dh / 2, dw, dh)
+    return
+  }
+  const off = scratch ?? document.createElement('canvas')
+  off.width = Math.max(2, Math.round(dw))
+  off.height = Math.max(2, Math.round(dh))
+  const octx = off.getContext('2d', { willReadFrequently: true })
+  if (!octx) {
+    ctx.drawImage(gif, cx - dw / 2, cy - dh / 2, dw, dh)
+    return
+  }
+  octx.clearRect(0, 0, off.width, off.height)
+  octx.drawImage(gif, 0, 0, off.width, off.height)
+  keyCanvasInPlace(off)
+  ctx.drawImage(off, cx - dw / 2, cy - dh / 2, dw, dh)
 }
 
 async function loadGifFirstFrame(memeUrl: string | null | undefined): Promise<HTMLImageElement | HTMLVideoElement | null> {
@@ -249,7 +282,7 @@ export async function exportImageWithOverlay(input: ExportInput, filename: strin
   if (!ctx) throw new Error('no 2d context')
   paintFrame(ctx, img, img.naturalWidth, img.naturalHeight, W, H)
   const gif = await loadGifFirstFrame(input.memeUrl)
-  if (gif) paintGifLayer(ctx, gif, input.gifLayer, W, H)
+  if (gif) paintGifLayer(ctx, gif, input.gifLayer, W, H, isMemeVideoSrc(input.memeUrl ?? ''))
   paintBlocks(ctx, input.blocks, W, H)
   // Throws on taint (no CORS headers) — caller handles the fallback.
   downloadBlob(await canvasToBlob(canvas, 'image/png'), filename)
@@ -285,9 +318,12 @@ export async function exportVideoWithOverlay(
     typeof (document.createElement('canvas') as HTMLCanvasElement & { captureStream?: unknown }).captureStream === 'function' &&
     typeof MediaRecorder !== 'undefined'
 
+  // Video memes bake keyed (green removed) like the feed; still GIFs paint raw.
+  const keyMeme = isMemeVideoSrc(input.memeUrl ?? '')
+  const memeScratch = document.createElement('canvas')
   const paint = (ctx: CanvasRenderingContext2D) => {
     paintFrame(ctx, v, v.videoWidth, v.videoHeight, W, H)
-    if (gif) paintGifLayer(ctx, gif, input.gifLayer, W, H)
+    if (gif) paintGifLayer(ctx, gif, input.gifLayer, W, H, keyMeme, memeScratch)
     paintBlocks(ctx, input.blocks, W, H)
   }
 

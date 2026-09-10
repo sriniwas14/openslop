@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { cn, proxiedMediaUrl } from '@/lib/utils'
 import { MEME_GIF_COMPOSITION } from '@/components/feed/overlayConfig'
+import ChromaKeyVideo from '@/components/feed/ChromaKeyVideo'
 
 // ---------------------------------------------------------------------------
 // Layer 3 of the meme composition — the meme from the stored `meme_url`,
@@ -9,8 +10,9 @@ import { MEME_GIF_COMPOSITION } from '@/components/feed/overlayConfig'
 // Same composition coordinate system as the text overlay: position is the
 // centre anchor in % of the container, rendered with
 // translate(-50%, -50%). Images (incl. GIFs) render as <img> to preserve
-// animation; video memes (.mp4/.mov/.webm) render as a looping muted
-// <video>. Width is 70% of the composition; aspect ratio is never
+// animation; video memes (.mp4/.mov/.webm) render keyed through
+// ChromaKeyVideo (WebGL green-screen removal onto a transparent canvas).
+// Width is 70% of the composition; aspect ratio is never
 // distorted (object-contain + max-height cap). Hidden when there is no
 // meme_url or it fails to load.
 // ---------------------------------------------------------------------------
@@ -40,6 +42,7 @@ export default function MemeGifOverlay({
   draggable = false,
   disabled = false,
   selected = false,
+  active = true,
   onSelect,
   onPatch,
 }: {
@@ -50,6 +53,8 @@ export default function MemeGifOverlay({
   draggable?: boolean
   disabled?: boolean
   selected?: boolean
+  /** False when the card is offscreen — the video unloads its shader. */
+  active?: boolean
   onSelect?: (selected: boolean) => void
   onPatch?: (p: Partial<MemeGifLayer>) => void
 }) {
@@ -80,16 +85,14 @@ export default function MemeGifOverlay({
   }
 
   if (isMemeVideoSrc(src)) {
+    // Video memes are shot on green — key it out on a transparent canvas so
+    // the subject composites over the base visual (same box/handlers as the
+    // plain <video> before it; drag math resolves against the parent rect).
     return (
-      <video
-        src={proxiedMediaUrl(src)}
-        aria-label={alt}
-        autoPlay
-        loop
-        muted
-        playsInline
-        crossOrigin="anonymous"
-        draggable={false}
+      <ChromaKeyVideo
+        src={src}
+        alt={alt}
+        active={active}
         onError={() => setFailed(true)}
         onPointerDown={
           !interactive

@@ -14,5 +14,5 @@ type Props = {
 }
 
 export default function ContentFeedItem({ item, isActive }: Props) {
-  return <PostContainer source={postSourceFromFeedItem(item)} isActive={isActive} />
+  return <PostContainer source={postSourceFromFeedItem(item)} isActive={isActive} memeActive={isActive} />
 }

@@ -268,6 +268,9 @@ type PostMediaContainerProps = {
   visualStatus?: VisualSearchStatus | null
   /** Active video autoplays (muted, loop); inactive ones pause. */
   isActive?: boolean
+  /** Meme overlay plays only while true — the feed passes its visibility;
+   *  single-post surfaces (Library, dialogs) leave the default. */
+  memeActive?: boolean
   /** Native player controls on the video element (detail dialogs). */
   videoControls?: boolean
   /** Tap-a-layer callback — when absent the overlay is fully inert. */
@@ -293,6 +296,7 @@ export function PostMediaContainer({
   memeAlt,
   visualStatus,
   isActive = false,
+  memeActive = true,
   videoControls = false,
   onTextClick,
   onPatchBlocks,
@@ -387,6 +391,7 @@ export function PostMediaContainer({
             src={memeSrc}
             alt={memeAlt ?? alt ?? 'Meme overlay'}
             layer={gifLayer ?? DEFAULT_MEME_GIF_LAYER}
+            active={memeActive}
           />
         )}
       </div>
@@ -403,6 +408,9 @@ export function PostMediaContainer({
 type PostContainerProps = {
   source: PostSource
   isActive?: boolean
+  /** Meme overlay visibility — the feed passes its active index; Library /
+   *  dialogs leave the default so their single visible post keeps playing. */
+  memeActive?: boolean
   showPills?: boolean
   /** Action row (Reject/Edit/Review). Review renders only with a feedItem
    *  or an onReview handler. */
@@ -420,6 +428,7 @@ type PostContainerProps = {
 export function PostContainer({
   source,
   isActive = false,
+  memeActive = true,
   showPills = true,
   showActions = true,
   showReject = true,
@@ -568,6 +577,7 @@ export function PostContainer({
         memeAlt={content.memeName ?? content.hook ?? 'Meme overlay'}
         visualStatus={source.visualStatus}
         isActive={isActive}
+        memeActive={memeActive}
         onTextClick={openEditor}
         onPatchBlocks={patchBlocks}
         onAspectChange={setFittedAspect}

@@ -184,6 +184,31 @@ export const MEME_GIF_COMPOSITION = {
 } as const
 
 // ---------------------------------------------------------------------------
+// Chroma key (Layer 3 video memes) — fixed defaults, no user UI.
+//
+// R2 meme mp4s are shot on green; the overlay always keys green out so the
+// subject composites over the base visual. Key color is pure green in 0-1
+// RGB; similarity is the distance threshold below which a pixel is fully
+// transparent, smoothness feathers the edge, spill caps residual green on
+// kept pixels. Tuned once here — preview (WebGL) and export (canvas 2D)
+// share these numbers so baked downloads match the feed.
+// ---------------------------------------------------------------------------
+
+/** Fixed chroma-key defaults for video memes (green screen removal). */
+export const CHROMA_KEY = {
+  /** Pure green key color, 0-1 RGB. */
+  key: [0.0, 1.0, 0.0] as [number, number, number],
+  /** Distance below which a pixel is fully keyed out. */
+  similarity: 0.45,
+  /** Feather width above similarity for semi-transparent edges. */
+  smoothness: 0.1,
+  /** Max residual green above red/blue on kept pixels (spill suppression). */
+  spill: 0.1,
+  /** Preview canvas is capped at this long edge (perf; CSS scales it up). */
+  maxPreviewEdge: 480,
+} as const
+
+// ---------------------------------------------------------------------------
 // Layer-type presets — the single-select picker in the editor popup
 // (OverlayEditorPanel). Static list; picking a type applies its style preset
 // (position/size/colours/highlight) to the selected layer via onPatch. The
