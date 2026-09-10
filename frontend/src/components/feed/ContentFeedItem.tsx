@@ -14,6 +14,8 @@ type Props = {
   onSkip?: () => void
   onReviewPress?: (snapshot: PostReviewSnapshot) => void
   reviewActionRef?: { current: (() => void) | null }
+  soundOn?: boolean
+  onToggleSound?: () => void
   /** Peek rendering behind the active card — media only, no action buttons. */
   showActions?: boolean
   /** Peek rendering — hide the top stickers so they never double behind the
@@ -29,6 +31,8 @@ export default function ContentFeedItem({
   reviewActionRef,
   showActions,
   showPills,
+  soundOn,
+  onToggleSound,
 }: Props) {
   return (
     <PostContainer
@@ -40,6 +44,8 @@ export default function ContentFeedItem({
       reviewActionRef={reviewActionRef}
       showActions={showActions}
       showPills={showPills}
+      soundOn={soundOn}
+      onToggleSound={onToggleSound}
     />
   )
 }

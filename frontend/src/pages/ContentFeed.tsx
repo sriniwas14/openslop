@@ -42,6 +42,13 @@ export default function ContentFeed() {
     retry,
   } = useContentFeed(selectedId)
 
+  // Shared sound state — persists across cards in the session.
+  const [soundOn, setSoundOn] = useState(false)
+
+  const handleToggleSound = useCallback(() => {
+    setSoundOn((prev) => !prev)
+  }, [])
+
   // Review inputs for the swiped post — handed up by the active card.
   const [review, setReview] = useState<PostReviewSnapshot | null>(null)
   // Lets ArrowRight trigger the active card's check button.
@@ -67,13 +74,11 @@ export default function ContentFeed() {
     setActiveIndex(Math.min(clampedIndex + 1, Math.max(items.length - 1, 0)))
   }, [clampedIndex, items.length, setActiveIndex])
 
-  const handleReviewPress = useCallback(
-    (snapshot: PostReviewSnapshot) => {
-      goNext()
-      setReview(snapshot)
-    },
-    [goNext],
-  )
+  const handleReviewPress = useCallback((snapshot: PostReviewSnapshot) => {
+    // Stay on the same card under the dialog — advance only when the
+    // dialog closes (Cancel / Done / X / Esc / outside / Open Library).
+    setReview(snapshot)
+  }, [])
 
   // keyboard parity for the two deck buttons (no vertical list to scroll)
   const goNextRef = useRef(goNext)
@@ -170,6 +175,8 @@ export default function ContentFeed() {
                   onSkip={goNext}
                   onReviewPress={handleReviewPress}
                   reviewActionRef={reviewActionRef}
+                  soundOn={soundOn}
+                  onToggleSound={handleToggleSound}
                 />
               </motion.div>
             </AnimatePresence>
@@ -177,11 +184,18 @@ export default function ContentFeed() {
         </div>
       )}
 
-      {/* Deck-level Review popup for the swiped post — save to Library or share */}
+      {/* Deck-level Review popup for the swiped post — save to Library or share.
+          The deck advances on close (not on open), so the crossfade to the
+          next post runs when the user dismisses the dialog. goNext is
+          idempotent per render (clamped +1), so a duplicate close event
+          cannot skip two cards. */}
       <ReviewDialog
         open={review !== null}
         onOpenChange={(open) => {
-          if (!open) setReview(null)
+          if (!open && review !== null) {
+            setReview(null)
+            goNext()
+          }
         }}
         item={review?.item ?? null}
         visualUrl={review?.visualUrl ?? null}

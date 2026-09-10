@@ -32,6 +32,13 @@ export const EXPORT_FORMATS: Record<ExportFormatId, { W: number; H: number; labe
   '4:5': { W: 1080, H: 1350, label: 'Portrait · 4:5' },
 }
 
+// ponytail: downloads run the full source length plus a 1s freeze-frame
+// tail — no manual duration option and no ceiling.
+const TAIL_MS = 1000
+// ponytail: unbounded MediaRecorder bitrate makes long 1080p clips too big
+// for the /media/convert payload cap — 4 Mbps stays Instagram-clean.
+const RECORD_BITS_PER_SECOND = 4_000_000
+
 export type ExportInput = {
   url: string
   mediaType: 'image' | 'video'
@@ -289,11 +296,12 @@ export async function exportImageWithOverlay(input: ExportInput, filename: strin
 }
 
 /**
- * Baked MP4 download for video posts — replays the clip through a canvas
- * with the text painted every frame, records WebM, then converts to H.264
- * MP4 via POST /media/convert (IG/TikTok don't accept WebM). Falls back to
- * a baked still frame when recording is unsupported, or the raw WebM when
- * conversion fails. Returns which artifact was produced.
+ * Baked MP4 download for video posts — records the full clip through a
+ * canvas with the text painted every frame, plus a 1s freeze-frame tail,
+ * then converts to H.264 MP4 via POST /media/convert (IG/TikTok don't
+ * accept WebM). Falls back to a baked still frame when recording is
+ * unsupported or the stream length can't be measured, or the raw WebM
+ * when conversion fails. Returns which artifact was produced.
  */
 export async function exportVideoWithOverlay(
   input: ExportInput,
@@ -327,7 +335,11 @@ export async function exportVideoWithOverlay(
     paintBlocks(ctx, input.blocks, W, H)
   }
 
-  if (!canRecord) {
+  // Full source length plus a 1s tail. Unmeasurable streams (no finite
+  // duration — onended may never fire) take the still path instead of
+  // recording blindly forever.
+  const srcMs = Number.isFinite(v.duration) && v.duration > 0 ? v.duration * 1000 : null
+  if (!canRecord || srcMs === null) {
     // Still-frame fallback: seek near the start and bake one PNG.
     await new Promise<void>((resolve, reject) => {
       v.onseeked = () => resolve()
@@ -359,7 +371,9 @@ export async function exportVideoWithOverlay(
       return false
     }
   })
-  const rec = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream)
+  const rec = mime
+    ? new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: RECORD_BITS_PER_SECOND })
+    : new MediaRecorder(stream, { videoBitsPerSecond: RECORD_BITS_PER_SECOND })
   const chunks: Blob[] = []
   const done = new Promise<Blob>((resolve, reject) => {
     rec.ondataavailable = (e) => {
@@ -379,15 +393,17 @@ export async function exportVideoWithOverlay(
   }
   tick()
   rec.start(250)
-  const capMs = Math.min((v.duration || 10) * 1000, 60000)
   await new Promise<void>((resolve) => {
     const timer = window.setTimeout(() => {
       window.clearTimeout(timer)
       resolve()
-    }, capMs)
+    }, srcMs + TAIL_MS)
     v.onended = () => {
-      window.clearTimeout(timer)
-      resolve()
+      // Hold the last frame for the 1s tail while painting continues.
+      window.setTimeout(() => {
+        window.clearTimeout(timer)
+        resolve()
+      }, TAIL_MS)
     }
   })
   cancelAnimationFrame(raf)
@@ -411,6 +427,163 @@ export async function exportVideoWithOverlay(
   v.removeAttribute('src')
   v.load()
   // WebM → MP4 so the file uploads to Instagram/TikTok; raw WebM fallback.
+  try {
+    const res = await fetch('/media/convert', { method: 'POST', credentials: 'include', headers: { 'content-type': 'video/webm' }, body: blob })
+    if (!res.ok) throw new Error(`convert ${res.status}`)
+    const mp4 = await res.blob()
+    downloadBlob(mp4, filename.replace(/\.webm$/i, '.mp4'))
+    return 'mp4'
+  } catch {
+    downloadBlob(blob, filename)
+    return 'webm'
+  }
+}
+
+/**
+ * Sniff the real file behind a URL — stored media-type labels can't be
+ * trusted (a 27s video labeled "image" would otherwise download whole).
+ * Returns the playable duration in seconds, or null when the URL isn't
+ * video or its metadata can't be read.
+ */
+export async function probeVideoDuration(url: string, timeoutMs = 8000): Promise<number | null> {
+  let v: HTMLVideoElement
+  try {
+    v = await Promise.race([
+      loadVideo(url),
+      new Promise<never>((_, reject) => window.setTimeout(() => reject(new Error('probe timeout')), timeoutMs)),
+    ])
+  } catch {
+    return null
+  }
+  const d = v.duration
+  v.removeAttribute('src')
+  v.load()
+  return Number.isFinite(d) && d > 0 ? d : null
+}
+
+/**
+ * Baked MP4 download for image-base posts with a video meme overlay —
+ * still base image with the playing (chroma-keyed) meme + text recorded
+ * per frame for the full meme length plus a 1s freeze-frame tail, then
+ * converted to H.264 MP4 via POST /media/convert. Falls back to a baked
+ * PNG still when recording is unsupported or the meme length can't be
+ * measured. Returns which artifact was made.
+ */
+export async function exportImageWithAnimatedMeme(
+  input: ExportInput,
+  filename: string,
+  format: ExportFormatId = '9:16',
+  onStillFallback?: () => void,
+): Promise<'mp4' | 'webm' | 'still'> {
+  if (!input.memeUrl) throw new Error('no meme overlay')
+  const img = await loadImage(input.url)
+  const meme = await loadVideo(input.memeUrl)
+  const { W, H } = EXPORT_FORMATS[format] ?? EXPORT_FORMATS['9:16']
+  await ensureFont(700)
+  meme.muted = true
+  meme.loop = false
+  try {
+    meme.currentTime = 0
+  } catch {
+    // Start from wherever the decoder is ready.
+  }
+
+  const canRecord =
+    typeof HTMLCanvasElement !== 'undefined' &&
+    typeof (document.createElement('canvas') as HTMLCanvasElement & { captureStream?: unknown }).captureStream === 'function' &&
+    typeof MediaRecorder !== 'undefined'
+
+  const memeScratch = document.createElement('canvas')
+  const paint = (ctx: CanvasRenderingContext2D) => {
+    paintFrame(ctx, img, img.naturalWidth, img.naturalHeight, W, H)
+    paintGifLayer(ctx, meme, input.gifLayer, W, H, true, memeScratch)
+    paintBlocks(ctx, input.blocks, W, H)
+  }
+
+  // Full meme length plus a 1s tail (the paused meme holds its last
+  // frame). Unmeasurable memes take the still path instead of recording
+  // blindly forever.
+  const srcMs = Number.isFinite(meme.duration) && meme.duration > 0 ? meme.duration * 1000 : null
+  if (!canRecord || srcMs === null) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        meme.onseeked = () => resolve()
+        meme.onerror = () => reject(new Error('seek failed'))
+        meme.currentTime = Math.min(0.1, (meme.duration || 1) / 2)
+      })
+    } catch {
+      // Bake whatever frame the decoder holds.
+    }
+    const canvas = document.createElement('canvas')
+    canvas.width = W
+    canvas.height = H
+    const ctx = canvas.getContext('2d')
+    if (!ctx) throw new Error('no 2d context')
+    paint(ctx)
+    onStillFallback?.()
+    downloadBlob(await canvasToBlob(canvas, 'image/png'), filename.replace(/\.webm$/i, '.png'))
+    return 'still'
+  }
+
+  const canvas = document.createElement('canvas')
+  canvas.width = W
+  canvas.height = H
+  const ctx = canvas.getContext('2d')
+  if (!ctx) throw new Error('no 2d context')
+
+  const stream = (canvas as HTMLCanvasElement & { captureStream: (fps: number) => MediaStream }).captureStream(30)
+  const mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find((m) => {
+    try {
+      return MediaRecorder.isTypeSupported(m)
+    } catch {
+      return false
+    }
+  })
+  const rec = mime
+    ? new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: RECORD_BITS_PER_SECOND })
+    : new MediaRecorder(stream, { videoBitsPerSecond: RECORD_BITS_PER_SECOND })
+  const chunks: Blob[] = []
+  const done = new Promise<Blob>((resolve, reject) => {
+    rec.ondataavailable = (e) => {
+      if (e.data.size) chunks.push(e.data)
+    }
+    rec.onstop = () => resolve(new Blob(chunks, { type: 'video/webm' }))
+    rec.onerror = () => reject(new Error('record failed'))
+  })
+
+  await meme.play().catch(() => {})
+  let raf = 0
+  const tick = () => {
+    paint(ctx)
+    raf = requestAnimationFrame(tick)
+  }
+  tick()
+  rec.start(250)
+  await new Promise<void>((resolve) => {
+    const timer = window.setTimeout(() => {
+      window.clearTimeout(timer)
+      resolve()
+    }, srcMs + TAIL_MS)
+    meme.onended = () => {
+      // Hold the last meme frame for the 1s tail while painting continues.
+      window.setTimeout(() => {
+        window.clearTimeout(timer)
+        resolve()
+      }, TAIL_MS)
+    }
+  })
+  cancelAnimationFrame(raf)
+  try {
+    meme.pause()
+  } catch {
+    // Already stopped.
+  }
+  paint(ctx)
+  await new Promise((r) => window.setTimeout(r, 300))
+  rec.stop()
+  const blob = await done
+  meme.removeAttribute('src')
+  meme.load()
   try {
     const res = await fetch('/media/convert', { method: 'POST', credentials: 'include', headers: { 'content-type': 'video/webm' }, body: blob })
     if (!res.ok) throw new Error(`convert ${res.status}`)

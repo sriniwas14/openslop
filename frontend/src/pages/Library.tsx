@@ -23,6 +23,7 @@ import { useCompany } from '@/context/CompanyContext'
 import { cn } from '@/lib/utils'
 import { EXPORT_FORMATS, type ExportFormatId } from '@/lib/exportOverlay'
 import { platformMeta, typeLabel } from '@/components/feed/data'
+import { isMemeVideoSrc } from '@/components/feed/MemeGifOverlay'
 import PostContainer, { PostMediaContainer, postSourceFromBankItem, postSourceFromSavedPost } from '@/components/feed/PostContainer'
 import { StatusBadge, ViewSwitcher } from '@/components/content/primitives'
 import type { ViewMode } from '@/components/content/data'
@@ -164,21 +165,23 @@ export default function Library() {
   const [downloadTarget, setDownloadTarget] = useState<{ kind: 'saved' | 'bank'; id: string } | null>(null)
   const [downloadFormat, setDownloadFormat] = useState<ExportFormatId>('9:16')
 
-  // Media-type-aware suggestion: videos → Reels 9:16 (MP4), images → 1:1
-  // square feed post (PNG). All ratios stay selectable; this only presets
-  // and badges the recommended one.
+  // Media-type-aware suggestion: videos (or image memes carrying an MP4
+  // overlay) → Reels 9:16 (MP4), plain images → 1:1 square feed post (PNG).
+  // All ratios stay selectable; this only presets and badges the recommended one.
   const downloadSuggestion = useMemo(() => {
     if (!downloadTarget) return null
-    const mediaType =
+    const entry =
       downloadTarget.kind === 'saved'
-        ? saved.find((p) => p.id === downloadTarget.id)?.mediaType
-        : bank.find((m) => m.id === downloadTarget.id)?.mediaType
-    const isVideo = mediaType === 'video'
+        ? saved.find((p) => p.id === downloadTarget.id)
+        : bank.find((m) => m.id === downloadTarget.id)
+    const mediaType = entry?.mediaType
+    const memeUrl = entry?.memeUrl ?? null
+    const isVideo = mediaType === 'video' || (!!memeUrl && isMemeVideoSrc(memeUrl))
     return {
       isVideo,
       suggested: (isVideo ? '9:16' : '1:1') as ExportFormatId,
       note: isVideo
-        ? 'Suggested for Instagram Reels & TikTok — downloads as MP4.'
+        ? 'Suggested for Instagram Reels & TikTok — full length plus 1 second, downloads as MP4.'
         : 'Suggested as a square Instagram feed post — downloads as PNG.',
     }
   }, [downloadTarget, saved, bank])
@@ -518,29 +521,61 @@ export default function Library() {
         toast({ title: 'No file to download', variant: 'warning' })
         return
       }
-      // Bake the on-screen overlay text into the file so the download
-      // carries the same text seen in the feed. Falls back to the raw
-      // file when baking is impossible.
-      if (post.blocks.length > 0) {
-        setDownloadingId(post.id)
+      // Routing follows the real file, not the stored mediaType label —
+      // a video mislabeled "image" would otherwise download whole (e.g.
+      // the 27s original). Videos record full length + 1s tail; an MP4
+      // meme overlay on an image base records meme length + 1s.
+      // ponytail: isMemeVideoSrc is the single video-meme detector (feed overlay).
+      const hasVideoMeme = !!post.memeUrl && isMemeVideoSrc(post.memeUrl)
+      const storedVideo = post.mediaType === 'video' || hasVideoMeme
+      // Spinner covers the probe below so double-clicks can't queue two bakes.
+      setDownloadingId(post.id)
+      let probedSecs: number | null = null
+      try {
+        const { probeVideoDuration } = await import('@/lib/exportOverlay')
+        probedSecs = await probeVideoDuration(src)
+      } catch {
+        probedSecs = null
+      }
+      const baseIsVideo = probedSecs !== null || post.mediaType === 'video'
+      if (post.blocks.length > 0 || storedVideo || baseIsVideo) {
         try {
-          const { exportImageWithOverlay, exportVideoWithOverlay, EXPORT_FORMATS } = await import('@/lib/exportOverlay')
+          const { exportImageWithOverlay, exportVideoWithOverlay, exportImageWithAnimatedMeme, probeVideoDuration, EXPORT_FORMATS } = await import('@/lib/exportOverlay')
           const { W, H } = EXPORT_FORMATS[format] ?? EXPORT_FORMATS['9:16']
           const base = slugFilename(post.title ?? post.hook ?? 'post', post.mediaType).replace(/\.(mp4|jpg)$/i, '')
           const tag = `${W}x${H}`
-          if (post.mediaType === 'video') {
+          const stillFallback = () => toast({ title: 'Saved as still image', description: 'Video recording is unsupported here — exported one frame with text.', variant: 'info' })
+          const secsNote = (s: number | null) => (s !== null ? ` ~${Math.round(s + 1)}s clip (full length + 1s).` : '')
+          // ponytail: one diagnostic line so a bad download is traceable from a screenshot.
+          console.info('[download]', { kind: 'saved', id: post.id, stored: post.mediaType, probedSecs, hasVideoMeme, route: baseIsVideo ? 'video' : hasVideoMeme ? 'meme' : 'image' })
+          if (baseIsVideo) {
             const result = await exportVideoWithOverlay(
               { url: src, mediaType: 'video', blocks: post.blocks, memeUrl: post.memeUrl, gifLayer: post.gifLayer },
               `${base}_${tag}.webm`,
               format,
-              () => toast({ title: 'Saved as still image', description: 'Video recording is unsupported here — exported one frame with text.', variant: 'info' }),
+              stillFallback,
             )
             if (result === 'mp4') {
-              toast({ title: 'Download started', description: `MP4 ${tag} with your overlay text — ready for Instagram & TikTok.`, variant: 'success' })
+              toast({ title: 'Download started', description: `MP4 ${tag} with your overlay text — ready for Instagram & TikTok.${secsNote(probedSecs)}`, variant: 'success' })
             } else if (result === 'webm') {
-              toast({ title: 'MP4 conversion failed', description: 'Downloaded WebM instead — convert to MP4 before uploading.', variant: 'warning' })
+              toast({ title: 'MP4 conversion failed', description: `Downloaded WebM instead — convert to MP4 before uploading.${secsNote(probedSecs)}`, variant: 'warning' })
             } else {
               toast({ title: 'Download started', description: 'Still frame with your overlay text.', variant: 'success' })
+            }
+          } else if (hasVideoMeme && post.memeUrl) {
+            const memeSecs = await probeVideoDuration(post.memeUrl)
+            const result = await exportImageWithAnimatedMeme(
+              { url: src, mediaType: 'image', blocks: post.blocks, memeUrl: post.memeUrl, gifLayer: post.gifLayer },
+              `${base}_${tag}.webm`,
+              format,
+              stillFallback,
+            )
+            if (result === 'mp4') {
+              toast({ title: 'Download started', description: `MP4 ${tag} with the animated meme — ready for Instagram & TikTok.${secsNote(memeSecs)}`, variant: 'success' })
+            } else if (result === 'webm') {
+              toast({ title: 'MP4 conversion failed', description: `Downloaded WebM instead — convert to MP4 before uploading.${secsNote(memeSecs)}`, variant: 'warning' })
+            } else {
+              toast({ title: 'Download started', description: 'Still frame with the meme overlay.', variant: 'success' })
             }
           } else {
             await exportImageWithOverlay(
@@ -552,17 +587,28 @@ export default function Library() {
           }
           return
         } catch {
+          if (storedVideo || baseIsVideo) {
+            // Never silently hand back the full-length original for video —
+            // the whole point of the bake is the 5s cap.
+            toast({ title: 'Could not prepare this video', description: 'Please try again — the original file was not downloaded.', variant: 'error' })
+            return
+          }
           toast({ title: 'Baking text failed', description: 'Downloading the original file instead.', variant: 'warning' })
         } finally {
           setDownloadingId(null)
         }
       }
-      const result = await downloadFile(src, slugFilename(post.title ?? post.hook ?? 'post', post.mediaType))
-      toast({
-        title: result === 'downloaded' ? 'Download started' : 'Opened in a new tab',
-        description: result === 'downloaded' ? undefined : 'The file could not be fetched directly.',
-        variant: 'success',
-      })
+      // Raw originals are images only here — every video bakes above.
+      try {
+        const result = await downloadFile(src, slugFilename(post.title ?? post.hook ?? 'post', post.mediaType))
+        toast({
+          title: result === 'downloaded' ? 'Download started' : 'Opened in a new tab',
+          description: result === 'downloaded' ? undefined : 'The file could not be fetched directly.',
+          variant: 'success',
+        })
+      } finally {
+        setDownloadingId(null)
+      }
     },
     [toast],
   )
@@ -573,25 +619,55 @@ export default function Library() {
         toast({ title: 'Media is still loading', variant: 'warning' })
         return
       }
-      // Bank items with text layers get the same baked, frame-normalized
-      // export as saved posts; plain media downloads raw.
-      if (item.blocks.length > 0) {
-        setDownloadingId(item.id)
+      // Same rule as saved posts: routing follows the real file, not the
+      // stored label. Videos record full length + 1s tail; an MP4 meme
+      // overlay on an image records meme length + 1s.
+      // ponytail: isMemeVideoSrc is the single video-meme detector (feed overlay).
+      const hasVideoMeme = !!item.memeUrl && isMemeVideoSrc(item.memeUrl)
+      const storedVideo = item.mediaType === 'video' || hasVideoMeme
+      // Spinner covers the probe below so double-clicks can't queue two bakes.
+      setDownloadingId(item.id)
+      let probedSecs: number | null = null
+      try {
+        const { probeVideoDuration } = await import('@/lib/exportOverlay')
+        probedSecs = await probeVideoDuration(item.fileUrl)
+      } catch {
+        probedSecs = null
+      }
+      const baseIsVideo = probedSecs !== null || item.mediaType === 'video'
+      if (item.blocks.length > 0 || storedVideo || baseIsVideo) {
         try {
-          const { exportImageWithOverlay, exportVideoWithOverlay, EXPORT_FORMATS } = await import('@/lib/exportOverlay')
+          const { exportImageWithOverlay, exportVideoWithOverlay, exportImageWithAnimatedMeme, probeVideoDuration, EXPORT_FORMATS } = await import('@/lib/exportOverlay')
           const { W, H } = EXPORT_FORMATS[format] ?? EXPORT_FORMATS['9:16']
           const base = slugFilename(item.name, item.mediaType).replace(/\.(mp4|jpg)$/i, '')
           const tag = `${W}x${H}`
-          if (item.mediaType === 'video') {
+          const stillFallback = () => toast({ title: 'Saved as still image', description: 'Video recording is unsupported here — exported one frame with text.', variant: 'info' })
+          const secsNote = (s: number | null) => (s !== null ? ` ~${Math.round(s + 1)}s clip (full length + 1s).` : '')
+          // ponytail: one diagnostic line so a bad download is traceable from a screenshot.
+          console.info('[download]', { kind: 'bank', id: item.id, stored: item.mediaType, probedSecs, hasVideoMeme, route: baseIsVideo ? 'video' : hasVideoMeme ? 'meme' : 'image' })
+          if (baseIsVideo) {
             const result = await exportVideoWithOverlay(
               { url: item.fileUrl, mediaType: 'video', blocks: item.blocks, memeUrl: item.memeUrl, gifLayer: item.gifLayer },
               `${base}_${tag}.webm`,
               format,
-              () => toast({ title: 'Saved as still image', description: 'Video recording is unsupported here — exported one frame with text.', variant: 'info' }),
+              stillFallback,
             )
             toast({
               title: result === 'mp4' ? 'Download started' : result === 'webm' ? 'MP4 conversion failed' : 'Download started',
-              description: result === 'mp4' ? `MP4 ${tag} with your overlay text — ready for Instagram & TikTok.` : result === 'webm' ? 'Downloaded WebM instead — convert to MP4 before uploading.' : 'Still frame with your overlay text.',
+              description: result === 'mp4' ? `MP4 ${tag} with your overlay text — ready for Instagram & TikTok.${secsNote(probedSecs)}` : result === 'webm' ? `Downloaded WebM instead — convert to MP4 before uploading.${secsNote(probedSecs)}` : 'Still frame with your overlay text.',
+              variant: result === 'webm' ? 'warning' : 'success',
+            })
+          } else if (hasVideoMeme && item.memeUrl) {
+            const memeSecs = await probeVideoDuration(item.memeUrl)
+            const result = await exportImageWithAnimatedMeme(
+              { url: item.fileUrl, mediaType: 'image', blocks: item.blocks, memeUrl: item.memeUrl, gifLayer: item.gifLayer },
+              `${base}_${tag}.webm`,
+              format,
+              stillFallback,
+            )
+            toast({
+              title: result === 'mp4' ? 'Download started' : result === 'webm' ? 'MP4 conversion failed' : 'Download started',
+              description: result === 'mp4' ? `MP4 ${tag} with the animated meme — ready for Instagram & TikTok.${secsNote(memeSecs)}` : result === 'webm' ? `Downloaded WebM instead — convert to MP4 before uploading.${secsNote(memeSecs)}` : 'Still frame with the meme overlay.',
               variant: result === 'webm' ? 'warning' : 'success',
             })
           } else {
@@ -604,6 +680,11 @@ export default function Library() {
           }
           return
         } catch {
+          if (storedVideo || baseIsVideo) {
+            // Never silently hand back the full-length original for video.
+            toast({ title: 'Could not prepare this video', description: 'Please try again — the original file was not downloaded.', variant: 'error' })
+            return
+          }
           toast({ title: 'Baking text failed', description: 'Downloading the original file instead.', variant: 'warning' })
         } finally {
           setDownloadingId(null)
@@ -620,16 +701,19 @@ export default function Library() {
     [toast],
   )
 
-  // No text layers → raw file immediately, no picker needed. Otherwise
-  // open the format picker (IG/TikTok frame choice) before baking,
-  // preselected to the media-type suggestion (video → Reels, image → 1:1).
+  // Text layers, video memes, or stored videos open the format picker
+  // before baking (video → Reels 9:16, image → 1:1). Stored-plain-images
+  // without text download direct — the handler probes the real file and
+  // bakes on the spot if it's actually video.
   const requestDownload = useCallback(
     (target: { kind: 'saved' | 'bank'; id: string }) => {
-      const hasBlocks =
+      const entry =
         target.kind === 'saved'
-          ? (saved.find((p) => p.id === target.id)?.blocks.length ?? 0) > 0
-          : (bank.find((m) => m.id === target.id)?.blocks.length ?? 0) > 0
-      if (!hasBlocks) {
+          ? saved.find((p) => p.id === target.id)
+          : bank.find((m) => m.id === target.id)
+      const needsBake =
+        (entry?.blocks.length ?? 0) > 0 || entry?.mediaType === 'video' || (!!entry?.memeUrl && isMemeVideoSrc(entry.memeUrl))
+      if (!needsBake) {
         if (target.kind === 'saved') {
           const post = saved.find((p) => p.id === target.id)
           if (post) void handleDownloadSaved(post, '9:16')
@@ -639,11 +723,8 @@ export default function Library() {
         }
         return
       }
-      const mediaType =
-        target.kind === 'saved'
-          ? saved.find((p) => p.id === target.id)?.mediaType
-          : bank.find((m) => m.id === target.id)?.mediaType
-      setDownloadFormat(mediaType === 'video' ? '9:16' : '1:1')
+      const isVideo = entry?.mediaType === 'video' || (!!entry?.memeUrl && isMemeVideoSrc(entry.memeUrl))
+      setDownloadFormat(isVideo ? '9:16' : '1:1')
       setDownloadTarget(target)
     },
     [saved, bank, handleDownloadSaved, handleDownloadBank],

@@ -31,6 +31,7 @@ type Props = {
   style?: CSSProperties
   /** False when the card scrolled out of view — unload everything. */
   active?: boolean
+  soundOn?: boolean
   onError?: () => void
   onPointerDown?: PointerEventHandler<HTMLCanvasElement | HTMLVideoElement>
   onPointerMove?: PointerEventHandler<HTMLCanvasElement | HTMLVideoElement>
@@ -44,6 +45,7 @@ export default function ChromaKeyVideo({
   className,
   style,
   active = true,
+  soundOn = false,
   onError,
   onPointerDown,
   onPointerMove,
@@ -152,7 +154,7 @@ export default function ChromaKeyVideo({
         aria-label={alt}
         autoPlay={active}
         loop
-        muted
+        muted={!soundOn}
         playsInline
         preload={active ? 'auto' : 'metadata'}
         crossOrigin="anonymous"
@@ -186,7 +188,7 @@ export default function ChromaKeyVideo({
         aria-hidden
         tabIndex={-1}
         loop
-        muted
+        muted={!soundOn}
         playsInline
         preload="auto"
         crossOrigin="anonymous"

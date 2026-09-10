@@ -43,6 +43,7 @@ export default function MemeGifOverlay({
   disabled = false,
   selected = false,
   active = true,
+  soundOn = false,
   onSelect,
   onPatch,
 }: {
@@ -55,6 +56,7 @@ export default function MemeGifOverlay({
   selected?: boolean
   /** False when the card is offscreen — the video unloads its shader. */
   active?: boolean
+  soundOn?: boolean
   onSelect?: (selected: boolean) => void
   onPatch?: (p: Partial<MemeGifLayer>) => void
 }) {
@@ -93,6 +95,7 @@ export default function MemeGifOverlay({
         src={src}
         alt={alt}
         active={active}
+        soundOn={soundOn}
         onError={() => setFailed(true)}
         onPointerDown={
           !interactive

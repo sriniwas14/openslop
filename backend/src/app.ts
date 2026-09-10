@@ -96,12 +96,14 @@ export function createApp() {
   // (unuploadable to IG/TikTok); ffmpeg re-encodes to H.264/AAC server-side.
   // Session-gated: conversion burns CPU, must not be anonymous.
   app.addContentTypeParser("video/webm", { parseAs: "buffer" }, (_req, body, done) => done(null, body));
-  app.post("/media/convert", { preHandler: requireSession }, async (request, reply) => {
+  // ponytail: full-length download recordings (1080p, +1s tail) run past
+  // the 15MB global body cap — this route alone allows 100MB (~200s).
+  app.post("/media/convert", { preHandler: requireSession, bodyLimit: 100 * 1024 * 1024 }, async (request, reply) => {
     const input = request.body as Buffer | undefined;
     if (!input || !(input instanceof Buffer) || input.length === 0) {
       return reply.status(400).send({ error: "empty webm body" });
     }
-    if (input.length > 15 * 1024 * 1024) return reply.status(413).send({ error: "file too large" });
+    if (input.length > 100 * 1024 * 1024) return reply.status(413).send({ error: "file too large" });
     const { spawn } = await import("node:child_process");
     const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
     const { tmpdir } = await import("node:os");

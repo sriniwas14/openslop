@@ -18,7 +18,7 @@ import type { MediaBankItem, SavedPost } from '@/services/library'
 import type { ContentItem } from '@/components/content/data'
 import { platformMeta, formatLabel, typeLabel } from '@/components/feed/data'
 import MediaTextOverlay, { overlayBlocksForContent, type OverlayBlock } from '@/components/feed/MediaTextOverlay'
-import MemeGifOverlay, { DEFAULT_MEME_GIF_LAYER, type MemeGifLayer } from '@/components/feed/MemeGifOverlay'
+import MemeGifOverlay, { DEFAULT_MEME_GIF_LAYER, type MemeGifLayer, isMemeVideoSrc } from '@/components/feed/MemeGifOverlay'
 import OverlayEditorDialog from '@/components/feed/OverlayEditorDialog'
 import ReviewDialog from '@/components/feed/ReviewDialog'
 
@@ -292,6 +292,8 @@ type PostMediaContainerProps = {
    *  already provides its own border (Library / Content dialogs). */
   framed?: boolean
   className?: string
+  soundOn?: boolean
+  onToggleSound?: () => void
 }
 
 export function PostMediaContainer({
@@ -314,6 +316,8 @@ export function PostMediaContainer({
   onAspectChange,
   framed = true,
   className,
+  soundOn = false,
+  onToggleSound,
 }: PostMediaContainerProps) {
   // Natural media dimensions — the viewport shrink-fits each post's actual
   // content so portrait video never sits in an oversized landscape box.
@@ -349,6 +353,13 @@ export function PostMediaContainer({
   const isFailed = visualStatus === 'failed'
   const isReview = visualStatus === 'needs_review'
 
+  // Sound: one button, default off. When on, meme video takes priority over base.
+  const memeIsVideo = memeSrc ? isMemeVideoSrc(memeSrc) : false
+  const memeCanPlayAudio = !!memeIsVideo && memeActive
+  const baseSoundOn = soundOn ? (!memeCanPlayAudio ? true : false) : false
+  const memeSoundOn = soundOn ? (memeCanPlayAudio ? true : false) : false
+  const hasAnyAudio = isVideo || memeIsVideo
+
   return (
     <div
       style={{ '--ar': String(mediaAspect) } as CSSProperties}
@@ -372,7 +383,7 @@ export function PostMediaContainer({
             onNaturalSize={reportNaturalSize}
           />
         ) : isVideo && src ? (
-          <VideoVisual src={src} isActive={isActive} poster={poster} controls={videoControls} onNaturalSize={reportNaturalSize} />
+          <VideoVisual src={src} isActive={isActive} poster={poster} controls={videoControls} onNaturalSize={reportNaturalSize} soundOn={baseSoundOn} />
         ) : src ? (
           <ImageVisual src={src} alt={alt ?? 'Content visual'} onNaturalSize={reportNaturalSize} />
         ) : (
@@ -403,7 +414,21 @@ export function PostMediaContainer({
             alt={memeAlt ?? alt ?? 'Meme overlay'}
             layer={gifLayer ?? DEFAULT_MEME_GIF_LAYER}
             active={memeActive}
+            soundOn={memeSoundOn}
           />
+        )}
+
+        {/* Sound toggle — top-left, single button for the post. Default off. */}
+        {hasAnyAudio && onToggleSound && (
+          <button
+            type="button"
+            onClick={() => onToggleSound?.()}
+            className="absolute top-3 left-3 z-30 flex size-9 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-sm hover:bg-black/60 transition-colors"
+            aria-label={soundOn ? 'Mute sound' : 'Unmute sound'}
+            title={soundOn ? 'Mute sound' : 'Unmute sound'}
+          >
+            {soundOn ? <Volume2 className="size-4" /> : <VolumeX className="size-4" />}
+          </button>
         )}
       </div>
     </div>
@@ -444,6 +469,8 @@ type PostContainerProps = {
    *  with the draft layers + replacement media (session object URL or null). */
   onApplyEdit?: (patch: { blocks: OverlayBlock[]; gifLayer: MemeGifLayer; aspect: number | null; url: string | null; kind: 'image' | 'video' }) => void
   className?: string
+  soundOn?: boolean
+  onToggleSound?: () => void
 }
 
 export function PostContainer({
@@ -460,6 +487,8 @@ export function PostContainer({
   onReview,
   onApplyEdit,
   className,
+  soundOn,
+  onToggleSound,
 }: PostContainerProps) {
   const { contentDoc: content, mediaType } = source
   const baseSrc = source.visualUrl
@@ -637,6 +666,8 @@ export function PostContainer({
         onTextClick={openEditor}
         onPatchBlocks={patchBlocks}
         onAspectChange={setFittedAspect}
+        soundOn={soundOn}
+        onToggleSound={onToggleSound}
       />
 
       {/* Action row — one flat, center-aligned row: tinted Skip circle /
@@ -766,9 +797,9 @@ function ImageVisual({ src, alt, onNaturalSize }: { src: string; alt: string; on
 // Video visual — plays only when active, autoplays muted, loop.
 // ---------------------------------------------------------------------------
 
-function VideoVisual({ src, isActive, poster, controls, onNaturalSize }: { src: string; isActive: boolean; poster?: string | null; controls?: boolean; onNaturalSize?: (w: number, h: number) => void }) {
+function VideoVisual({ src, isActive, poster, controls, onNaturalSize, soundOn }: { src: string; isActive: boolean; poster?: string | null; controls?: boolean; onNaturalSize?: (w: number, h: number) => void; soundOn?: boolean }) {
   const ref = useRef<HTMLVideoElement>(null)
-  const [muted, setMuted] = useState(true)
+  const muted = soundOn === undefined ? true : !soundOn
   const [playing, setPlaying] = useState(false)
   const [showPlayBtn, setShowPlayBtn] = useState(false)
   const [failed, setFailed] = useState(false)
@@ -796,7 +827,7 @@ function VideoVisual({ src, isActive, poster, controls, onNaturalSize }: { src: 
     }
   }, [isActive])
 
-  // Keep the element's muted flag in sync with state (autoplay requires muted).
+  // Keep the element's muted flag in sync with controlled state.
   useEffect(() => {
     if (ref.current) ref.current.muted = muted
   }, [muted])
@@ -813,10 +844,6 @@ function VideoVisual({ src, isActive, poster, controls, onNaturalSize }: { src: 
     }
   }, [])
 
-  const toggleMute = useCallback(() => {
-    setMuted((m) => !m)
-  }, [])
-
   return (
     <div className="relative h-full w-full">
       {failed ? (
@@ -831,7 +858,7 @@ function VideoVisual({ src, isActive, poster, controls, onNaturalSize }: { src: 
           ref={ref}
           src={src}
           poster={poster ?? undefined}
-          muted
+          muted={muted}
           loop
           playsInline
           preload={isActive ? 'auto' : 'metadata'}
@@ -859,14 +886,6 @@ function VideoVisual({ src, isActive, poster, controls, onNaturalSize }: { src: 
         </button>
       )}
 
-      <button
-        type="button"
-        onClick={toggleMute}
-        className="absolute top-3 right-3 flex size-9 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-sm"
-        aria-label={muted ? 'Unmute' : 'Mute'}
-      >
-        {muted ? <VolumeX className="size-4" /> : <Volume2 className="size-4" />}
-      </button>
     </div>
   )
 }
