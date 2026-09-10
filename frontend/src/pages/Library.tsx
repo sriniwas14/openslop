@@ -1488,6 +1488,7 @@ function ScheduleCalendar({
 }
 
 function SavedMedia({ post }: { post: SavedPost }) {
+  const [soundOn, setSoundOn] = useState(false)
   // Same reusable media box as the Content Feed card: phone-capped width,
   // content-fitted aspect from the saved snapshot, contain-fit full frame,
   // and the same overlay engine — so text size/position match the feed.
@@ -1511,6 +1512,8 @@ function SavedMedia({ post }: { post: SavedPost }) {
         visualStatus={source.visualStatus}
         framed={false}
         className="w-full"
+        soundOn={soundOn}
+        onToggleSound={() => setSoundOn((prev) => !prev)}
       />
     </div>
   )
@@ -1523,6 +1526,7 @@ function SavedPostDetail({
   post: SavedPost
   onApplyEdit: (patch: { blocks: SavedPost['blocks']; gifLayer: SavedPost['gifLayer']; aspect: number | null; url: string | null; kind: 'image' | 'video' }) => void
 }) {
+  const [soundOn, setSoundOn] = useState(false)
   return (
     <div className="mx-auto w-full max-w-[24rem]">
       <PostContainer
@@ -1532,12 +1536,15 @@ function SavedPostDetail({
         showReject={false}
         onApplyEdit={onApplyEdit}
         className="max-w-none"
+        soundOn={soundOn}
+        onToggleSound={() => setSoundOn((prev) => !prev)}
       />
     </div>
   )
 }
 
 function BankMedia({ item }: { item: MediaBankItem }) {
+  const [soundOn, setSoundOn] = useState(false)
   // Same reusable media box as the feed card — bank uploads render through
   // the identical width/aspect/overlay pipeline via postSourceFromBankItem.
   const source = postSourceFromBankItem(item)
@@ -1554,6 +1561,8 @@ function BankMedia({ item }: { item: MediaBankItem }) {
         visualStatus={source.visualStatus}
         framed={false}
         className="w-full"
+        soundOn={soundOn}
+        onToggleSound={() => setSoundOn((prev) => !prev)}
       />
     </div>
   )
@@ -1566,6 +1575,7 @@ function BankMediaDetail({
   item: MediaBankItem
   onApplyEdit: (patch: { blocks: MediaBankItem['blocks']; gifLayer: MediaBankItem['gifLayer']; aspect: number | null; url: string | null; kind: 'image' | 'video' }) => void
 }) {
+  const [soundOn, setSoundOn] = useState(false)
   return (
     <div className="mx-auto w-full max-w-[24rem]">
       <PostContainer
@@ -1575,6 +1585,8 @@ function BankMediaDetail({
         showReject={false}
         onApplyEdit={onApplyEdit}
         className="max-w-none"
+        soundOn={soundOn}
+        onToggleSound={() => setSoundOn((prev) => !prev)}
       />
     </div>
   )
