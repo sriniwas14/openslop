@@ -1,5 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "../../lib/db";
+import { interleaveRoundRobin } from "../../lib/shuffle";
 import { companies, generatedContents, visualAssets, visualFeedDaily, visualSearchBatches } from "../../db/schema";
 import { parseGeneratedContentRow, type GeneratedContentDoc } from "../ugc/ugc.schemas";
 import { buildVisualQueries, refineVisualQueries, type VisualQueryMeta } from "./visual.queries";
@@ -57,6 +59,7 @@ export type VisualFeedDeps = {
   dailyLimit?: number;
   autoProcess?: boolean; // getContentFeed kicks off background processing (default true)
   now?: () => Date;
+  rand?: () => number; // shuffle source (default Math.random; injectable so tests are deterministic)
 };
 
 // ---------------------------------------------------------------------------
@@ -88,6 +91,65 @@ export function decodeCursor(cursor?: string | null): Cursor | null {
   } catch {
     return null; // an invalid cursor is treated as "start" rather than a 400
   }
+}
+
+// ---------------------------------------------------------------------------
+// Shuffled feed order — the clustering fix.
+//
+// Meme generation writes 5 variations per meme back-to-back, so createdAt order
+// serves 5 identical memes per batch. Instead the first page mints a FRESH
+// meme-interleaved shuffle (new on every reload) and later pages walk that same
+// snapshot via offset cursors — stable while scrolling, so no duplicates/skips.
+// The cursor stays opaque, so the client needs no changes.
+// ---------------------------------------------------------------------------
+
+type OffsetCursor = { offset: number; shuffleId: string };
+
+export function encodeOffsetCursor(offset: number, shuffleId: string): string {
+  return Buffer.from(JSON.stringify({ o: offset, s: shuffleId }), "utf8").toString("base64url");
+}
+
+/** Null for legacy {c,i} keyset cursors and garbage — callers fall back to keyset paging. */
+export function decodeOffsetCursor(cursor?: string | null): OffsetCursor | null {
+  if (!cursor) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    const offset = Number(parsed?.o);
+    const shuffleId = String(parsed?.s ?? "");
+    return Number.isInteger(offset) && offset >= 0 && shuffleId ? { offset, shuffleId } : null;
+  } catch {
+    return null;
+  }
+}
+
+// ponytail: in-memory snapshot per reload — no migration, no schema change. Snapshots
+// expire after 10 min and the cache is capped; an expired cursor simply mints a fresh
+// shuffle (rare duplicate across a restart beats a 400).
+const SHUFFLE_TTL_MS = 10 * 60 * 1000;
+const SHUFFLE_CACHE_MAX = 200;
+const feedShuffles = new Map<string, { ids: string[]; expiresAt: number }>();
+
+function storeFeedShuffle(ids: string[]): string {
+  const now = Date.now();
+  for (const [k, v] of feedShuffles) {
+    if (v.expiresAt <= now) feedShuffles.delete(k);
+  }
+  while (feedShuffles.size >= SHUFFLE_CACHE_MAX) {
+    const oldest = feedShuffles.keys().next();
+    if (oldest.done) break;
+    feedShuffles.delete(oldest.value);
+  }
+  const shuffleId = randomUUID();
+  feedShuffles.set(shuffleId, { ids, expiresAt: now + SHUFFLE_TTL_MS });
+  return shuffleId;
+}
+
+/** Meme-interleaved ID order: same meme_id never clusters (see lib/shuffle). */
+export function buildShuffledFeedOrder(
+  rows: { id: string; memeId: string | null; contentFormat: string | null }[],
+  rand: () => number = Math.random,
+): string[] {
+  return interleaveRoundRobin(rows, (r) => r.memeId ?? r.contentFormat ?? "", rand).map((r) => r.id);
 }
 
 function rowToQueryMeta(row: any): VisualQueryMeta {
@@ -359,6 +421,18 @@ export async function getBatchByCursor(companyId: string, date: string, cursorKe
   return row ?? null;
 }
 
+// ponytail: poll must be idempotent — re-requesting the same cursorKey
+// returns the stored page, never a fresh shuffle (fresh shuffle on every
+// poll re-dealt page 1 and overlapped later pages → duplicate React keys).
+function parseStoredIds(raw: unknown): string[] {
+  try {
+    const parsed = JSON.parse(String(raw ?? "[]"));
+    return Array.isArray(parsed) ? parsed.map((x) => String(x)).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Process every not-yet-matched item in a batch. Idempotent: already matched/needs_review
  * items are skipped, one failed item never blocks the rest, and the daily limit stops
@@ -474,56 +548,18 @@ export type GetContentFeedInput = {
   deps?: VisualFeedDeps;
 };
 
-/**
- * Return one batch (≤5 posts) of the brand's content with each post's current visual state.
- * Creating a NEW batch kicks off background visual search (fire-and-forget); re-requesting
- * the SAME cursor is a no-op trigger (duplicate-prefetch guard) and simply reflects the
- * latest state, which is how the client polls a batch until its visuals are ready.
- */
-export async function getContentFeed(input: GetContentFeedInput): Promise<ContentFeedResponse> {
-  const { companyId, userId } = input;
-  const deps = input.deps ?? {};
-  const limit = Math.max(1, Math.min(FEED_BATCH_SIZE, input.limit ?? FEED_BATCH_SIZE));
-  const dailyLimit = deps.dailyLimit ?? FEED_DAILY_LIMIT;
-
-  const [company] = await db.select().from(companies).where(and(eq(companies.id, companyId), eq(companies.userId, userId)));
-  if (!company) throw new VisualFeedError("Company not found", 404);
-
-  const date = feedDate(deps.now?.());
-  const keyset = decodeCursor(input.cursor);
-  const cursorKey = input.cursor ?? "start";
-
-  const whereClauses = [eq(generatedContents.companyId, companyId), eq(generatedContents.userId, userId)];
-  const kw = keysetWhere(keyset);
-  if (kw) whereClauses.push(kw as any);
-
-  const rows = await db
-    .select()
-    .from(generatedContents)
-    .where(and(...whereClauses))
-    .orderBy(desc(generatedContents.createdAt), desc(generatedContents.id))
-    .limit(limit + 1);
-
-  const hasMore = rows.length > limit;
-  const pageRows = rows.slice(0, limit);
-
-  const daily = await getDailyState(companyId, date, dailyLimit);
-
-  if (!pageRows.length) {
-    return {
-      items: [],
-      nextCursor: null,
-      hasMore: false,
-      dailyLimit,
-      preparedToday: daily.preparedCount,
-      remainingToday: Math.max(0, daily.dailyLimit - daily.preparedCount),
-      batch: { batchNumber: 0, size: 0, status: "ready" },
-    };
-  }
-
-  const nextCursor = hasMore ? encodeCursor(pageRows[pageRows.length - 1]) : null;
-
-  // find-or-create the batch row keyed by (company, date, cursor) — the dedup guard
+/** Shared batch-row find-or-create (the duplicate-prefetch guard) for both feed paths. */
+async function findOrCreateBatch(input: {
+  companyId: string;
+  userId: string;
+  date: string;
+  cursorKey: string;
+  contentIds: string[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  deps: VisualFeedDeps;
+}) {
+  const { companyId, userId, date, cursorKey, contentIds, nextCursor, hasMore, deps } = input;
   let batch = await getBatchByCursor(companyId, date, cursorKey);
   let isNew = false;
   if (!batch) {
@@ -542,11 +578,11 @@ export async function getContentFeed(input: GetContentFeedInput): Promise<Conten
         batchNumber: String(batchNumber),
         cursorKey,
         status: "pending",
-        size: String(pageRows.length),
+        size: String(contentIds.length),
         matchedCount: "0",
         needsReviewCount: "0",
         failedCount: "0",
-        contentIds: JSON.stringify(pageRows.map((r) => r.id)),
+        contentIds: JSON.stringify(contentIds),
         nextCursor,
         hasMore: hasMore ? "1" : "0",
         createdAt: now,
@@ -557,13 +593,16 @@ export async function getContentFeed(input: GetContentFeedInput): Promise<Conten
     batch = created ?? (await getBatchByCursor(companyId, date, cursorKey));
     isNew = !!created;
   }
-
   if (isNew && batch && deps.autoProcess !== false) {
     void processBatchVisualSearch(batch.id, deps).catch(() => {});
   }
+  return batch;
+}
 
+/** Map content rows (already in display order) to feed items with current visual state. */
+async function toFeedItems(pageRows: any[]): Promise<FeedItem[]> {
   const visuals = await loadVisualsForRows(pageRows);
-  const items: FeedItem[] = pageRows.map((row) => {
+  return pageRows.map((row) => {
     const doc: GeneratedContentDoc = parseGeneratedContentRow(row as any);
     const visual = row.visualAssetId ? (visuals.get(row.visualAssetId) ?? null) : null;
     const rawStatus = String((row as any).visualSearchStatus ?? "pending");
@@ -574,6 +613,179 @@ export async function getContentFeed(input: GetContentFeedInput): Promise<Conten
         : "pending";
     return { content: doc, visual, visualStatus };
   });
+}
+
+function emptyFeed(daily: DailyState, dailyLimit: number): ContentFeedResponse {
+  return {
+    items: [],
+    nextCursor: null,
+    hasMore: false,
+    dailyLimit,
+    preparedToday: daily.preparedCount,
+    remainingToday: Math.max(0, daily.dailyLimit - daily.preparedCount),
+    batch: { batchNumber: 0, size: 0, status: "ready" },
+  };
+}
+
+/**
+ * Return one batch (≤5 posts) of the brand's content with each post's current visual state.
+ * Creating a NEW batch kicks off background visual search (fire-and-forget); re-requesting
+ * the SAME cursor is a no-op trigger (duplicate-prefetch guard) and simply reflects the
+ * latest state, which is how the client polls a batch until its visuals are ready.
+ *
+ * Ordering: the first page mints a fresh meme-interleaved shuffle (new on every reload);
+ * later pages walk that same snapshot via offset cursors, so scrolling never duplicates
+ * or skips posts. Legacy {c,i} keyset cursors (in-flight during deploy) use the old path.
+ */
+export async function getContentFeed(input: GetContentFeedInput): Promise<ContentFeedResponse> {
+  const { companyId, userId } = input;
+  const deps = input.deps ?? {};
+  const limit = Math.max(1, Math.min(FEED_BATCH_SIZE, input.limit ?? FEED_BATCH_SIZE));
+  const dailyLimit = deps.dailyLimit ?? FEED_DAILY_LIMIT;
+
+  const [company] = await db.select().from(companies).where(and(eq(companies.id, companyId), eq(companies.userId, userId)));
+  if (!company) throw new VisualFeedError("Company not found", 404);
+
+  const date = feedDate(deps.now?.());
+  const rand = deps.rand ?? Math.random;
+  const cursorKey = input.cursor ?? "start";
+  const daily = await getDailyState(companyId, date, dailyLimit);
+
+  // --- idempotent re-read: the same cursorKey always serves its stored page ---
+  const stored = await getBatchByCursor(companyId, date, cursorKey);
+  const storedIds = parseStoredIds((stored as any)?.contentIds);
+  if (stored && storedIds.length) {
+    const rows = await db
+      .select()
+      .from(generatedContents)
+      .where(and(eq(generatedContents.companyId, companyId), inArray(generatedContents.id, storedIds)));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const pageRows = storedIds.map((id) => byId.get(id)).filter(Boolean) as any[];
+    // A wipe-and-regenerate between pages can orphan stored ids — fall
+    // through to a fresh shuffle rather than serving an empty page.
+    if (pageRows.length) {
+      const items = await toFeedItems(pageRows);
+      return {
+        items,
+        nextCursor: (stored as any).nextCursor ?? null,
+        hasMore: (stored as any).hasMore === "1",
+        dailyLimit,
+        preparedToday: daily.preparedCount,
+        remainingToday: Math.max(0, daily.dailyLimit - daily.preparedCount),
+        batch: {
+          batchNumber: Number((stored as any)?.batchNumber ?? 1),
+          size: Number((stored as any)?.size ?? pageRows.length),
+          status: ((stored as any)?.status as ContentFeedResponse["batch"]["status"]) ?? "pending",
+        },
+      };
+    }
+  }
+
+  // --- shuffled path: fresh shuffle on first page, snapshot walk after that ---
+  const offsetCur = decodeOffsetCursor(input.cursor);
+  if (!input.cursor || offsetCur) {
+    let order: string[];
+    let offset: number;
+    let shuffleId: string;
+    if (!input.cursor) {
+      const all = (await db
+        .select({ id: generatedContents.id, memeId: generatedContents.memeId, contentFormat: generatedContents.contentFormat })
+        .from(generatedContents)
+        .where(and(eq(generatedContents.companyId, companyId), eq(generatedContents.userId, userId)))) as {
+        id: string;
+        memeId: string | null;
+        contentFormat: string | null;
+      }[];
+      if (!all.length) return emptyFeed(daily, dailyLimit);
+      order = buildShuffledFeedOrder(all, rand);
+      offset = 0;
+      shuffleId = storeFeedShuffle(order);
+    } else {
+      const snap = feedShuffles.get(offsetCur!.shuffleId);
+      if (snap && snap.expiresAt > Date.now()) {
+        order = snap.ids;
+        offset = Math.min(offsetCur!.offset, order.length);
+        shuffleId = offsetCur!.shuffleId;
+      } else {
+        // snapshot expired (e.g. server restart mid-scroll) — a fresh shuffle beats a 400
+        const all = (await db
+          .select({ id: generatedContents.id, memeId: generatedContents.memeId, contentFormat: generatedContents.contentFormat })
+          .from(generatedContents)
+          .where(and(eq(generatedContents.companyId, companyId), eq(generatedContents.userId, userId)))) as {
+          id: string;
+          memeId: string | null;
+          contentFormat: string | null;
+        }[];
+        if (!all.length) return emptyFeed(daily, dailyLimit);
+        order = buildShuffledFeedOrder(all, rand);
+        offset = 0;
+        shuffleId = storeFeedShuffle(order);
+      }
+    }
+
+    const slice = order.slice(offset, offset + limit);
+    if (!slice.length) return emptyFeed(daily, dailyLimit);
+    const rows = await db
+      .select()
+      .from(generatedContents)
+      .where(and(eq(generatedContents.companyId, companyId), inArray(generatedContents.id, slice)));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    const pageRows = slice.map((id) => byId.get(id)).filter(Boolean) as any[];
+
+    const hasMore = offset + limit < order.length;
+    const nextCursor = hasMore ? encodeOffsetCursor(offset + limit, shuffleId) : null;
+
+    const batch = await findOrCreateBatch({ companyId, userId, date, cursorKey, contentIds: slice, nextCursor, hasMore, deps });
+    const items = await toFeedItems(pageRows);
+    return {
+      items,
+      nextCursor,
+      hasMore,
+      dailyLimit,
+      preparedToday: daily.preparedCount,
+      remainingToday: Math.max(0, daily.dailyLimit - daily.preparedCount),
+      batch: {
+        batchNumber: Number(batch?.batchNumber ?? 1),
+        size: Number(batch?.size ?? pageRows.length),
+        status: (batch?.status as ContentFeedResponse["batch"]["status"]) ?? "pending",
+      },
+    };
+  }
+
+  // --- legacy keyset path: only for {c,i} cursors issued before the shuffle change ---
+  const keyset = decodeCursor(input.cursor);
+
+  const whereClauses = [eq(generatedContents.companyId, companyId), eq(generatedContents.userId, userId)];
+  const kw = keysetWhere(keyset);
+  if (kw) whereClauses.push(kw as any);
+
+  const rows = await db
+    .select()
+    .from(generatedContents)
+    .where(and(...whereClauses))
+    .orderBy(desc(generatedContents.createdAt), desc(generatedContents.id))
+    .limit(limit + 1);
+
+  const hasMore = rows.length > limit;
+  const pageRows = rows.slice(0, limit);
+
+  if (!pageRows.length) {
+    return emptyFeed(daily, dailyLimit);
+  }
+
+  const nextCursor = hasMore ? encodeCursor(pageRows[pageRows.length - 1]) : null;
+
+  const batch = await findOrCreateBatch({
+    companyId,
+    userId,
+    date,
+    cursorKey,
+    contentIds: pageRows.map((r) => r.id),
+    nextCursor,
+    hasMore,
+    deps,
+  });
+  const items = await toFeedItems(pageRows);
 
   return {
     items,

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { z } from "zod";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -21,9 +21,9 @@ import { INFLUENCER_SYSTEM_PROMPT } from '../../../data/prompts/image'
 
 async function ensureTable() {
   try {
-    await db.run(`CREATE TABLE IF NOT EXISTS influencer (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, company_id TEXT NOT NULL, name TEXT NOT NULL, image_url TEXT NOT NULL, prompt TEXT, attributes TEXT, source TEXT NOT NULL DEFAULT 'generated', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)` as any);
+    await db.execute(sql`CREATE TABLE IF NOT EXISTS influencer (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, company_id TEXT NOT NULL, name TEXT NOT NULL, image_url TEXT NOT NULL, prompt TEXT, attributes TEXT, source TEXT NOT NULL DEFAULT 'generated', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
     // ensure index
-    try { await db.run(`CREATE INDEX IF NOT EXISTS idx_influencer_company ON influencer(company_id)` as any); } catch { }
+    try { await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_influencer_company ON influencer(company_id)`); } catch { }
   } catch { }
 }
 

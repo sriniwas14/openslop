@@ -1,29 +1,17 @@
 import { beforeAll, describe, expect, it } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import type { ContentAngle } from "../brand/brand.schemas";
 import type { ContentSlot } from "./ugc.prompts";
 import type { UgcBatchGenerator, ValidationContext } from "./ugc.service";
 
-// isolated DB before any module that imports lib/db loads. `bun test` runs every file in one
-// process, so lib/db is opened once with the FIRST file's path: agree on that path (??=) and
-// only clean up on process exit, never in afterAll (see instagram.service.test).
-const tmpDir = mkdtempSync(join(tmpdir(), "openslop-ugc-test-"));
-process.env.OPENSLOP_DB_PATH ??= join(tmpDir, "test.sqlite");
-process.on("exit", () => {
-  try {
-    rmSync(tmpDir, { recursive: true, force: true });
-  } catch {}
-});
-
+// Tests run against Neon (DATABASE_URL, migrated) — no local sqlite file.
 const [{ db }, schema] = await Promise.all([import("../../lib/db"), import("../../db/schema")]);
 const {
   DEFAULT_TARGET_COUNT,
   UgcError,
   countGeneratedContent,
   generateInitialBrandContent,
+  generateMemeBrandContent,
   getGenerationJobStatus,
   listGeneratedContent,
   planDistribution,
@@ -31,13 +19,6 @@ const {
 } = await import("./ugc.service");
 const { UGC_PLATFORMS, VISUAL_CATEGORIES, VISUAL_ORIENTATIONS, VISUAL_STYLES } = await import("./ugc.schemas");
 const { PROMPT_VERSION } = await import("./ugc.prompts");
-
-// `company` is the only table lib/db does not create lazily — create it before any hook runs
-try {
-  await db.run(`CREATE TABLE IF NOT EXISTS company (id text PRIMARY KEY, user_id text NOT NULL, name text NOT NULL, website text NOT NULL, persona text, created_at text NOT NULL, updated_at text NOT NULL)`);
-} catch {
-  /* already exists */
-}
 
 // ---------------------------------------------------------------------------
 // Fixtures — a fake AI so these tests never touch a provider
@@ -181,7 +162,7 @@ async function seedBrand(userId: string, companyId: string, angleCount = 10) {
 }
 
 async function allRows() {
-  return (await db.select().from(schema.generatedContents).all()) as any[];
+  return (await db.select().from(schema.generatedContents)) as any[];
 }
 
 const slotFixture: ContentSlot = { contentAngleId: "angle-1", platform: "instagram", contentFormat: "talking_head", contentType: "story" };
@@ -229,7 +210,7 @@ describe("generateInitialBrandContent", () => {
   });
 
   it("creates at least 100 valid records and completes the job (test 2)", async () => {
-    expect(DEFAULT_TARGET_COUNT).toBe(100);
+    expect(DEFAULT_TARGET_COUNT).toBe(20);
     expect(result.status).toBe("completed");
     expect(result.generatedCount).toBeGreaterThanOrEqual(100);
     expect(rows.length).toBeGreaterThanOrEqual(100);
@@ -606,5 +587,65 @@ describe("planDistribution", () => {
     expect(activeOnly.length).toBe(20);
     expect(activeOnly.every((s) => s.contentAngleId === "angle-3" || s.contentAngleId === "angle-4")).toBe(true);
     expect(planDistribution([], 100)).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Meme Engine — interleaved insert order (no 5-same-meme runs in DB order)
+// ---------------------------------------------------------------------------
+
+describe("generateMemeBrandContent interleaved insert order", () => {
+  beforeAll(async () => {
+    await resetDb();
+  });
+
+  it("writes variations round-robin across memes instead of grouped per meme", async () => {
+    const { MEME_LIBRARY } = await import("./meme.library");
+    const userId = "meme-shuffle-user";
+    const company = await seedCompany(userId, "memeshufflebrand");
+    await seedBrand(userId, (company as any).id, 3);
+
+    const HOOKS = [
+      "POV the handover board updated itself before standup",
+      "Me when the checklist clears while the kettle boils",
+      "Nobody talks about the lost shift notes anymore",
+      "That moment the roster sorts itself on a Monday",
+      "The inbox finally quiet and the crew actually smiling",
+    ];
+    const ANGLES = ["POV", "Me When", "Relatable", "Reaction", "Nobody"];
+    const gen = async ({ meme }: any) => ({
+      variations: HOOKS.map((hook, i) => ({
+        variation_id: i + 1,
+        creative_angle: ANGLES[i],
+        overlay_text: `${hook} ${meme.meme_metadata[0]}`,
+        description: `A ${meme.meme_metadata[0]} moment for shift crews handling ${HOOKS[(i + 2) % HOOKS.length].split(" ").slice(0, 3).join(" ")}`,
+        tags: [ANGLES[i], meme.meme_metadata[0], "handover"],
+        emotion: "Funny",
+        brand_angle: "Founder Problem",
+      })),
+      model: "fake-meme-model",
+    });
+
+    const res = await generateMemeBrandContent({ companyId: (company as any).id, userId, generateFn: gen as any, concurrency: 2 });
+    expect(res.status).toBe("completed");
+    expect(res.generatedCount).toBe(MEME_LIBRARY.length * 5);
+
+    // insertion order = createdAt order (sequential awaited inserts); the old code
+    // wrote 5 same-meme rows back-to-back and every createdAt-ordered view clusters.
+    const rows = (await db
+      .select({ memeId: schema.generatedContents.memeId })
+      .from(schema.generatedContents)
+      .where(eq(schema.generatedContents.companyId, (company as any).id))
+      .orderBy(schema.generatedContents.createdAt)) as { memeId: string }[];
+    expect(rows).toHaveLength(MEME_LIBRARY.length * 5);
+    let best = 0;
+    let cur = 0;
+    let prev: string | null = null;
+    for (const row of rows) {
+      cur = row.memeId === prev ? cur + 1 : 1;
+      prev = row.memeId;
+      best = Math.max(best, cur);
+    }
+    expect(best).toBe(1);
   });
 });

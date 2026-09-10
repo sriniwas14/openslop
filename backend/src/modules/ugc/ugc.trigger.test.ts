@@ -1,29 +1,8 @@
 import { afterAll, describe, expect, it, mock } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { eq } from "drizzle-orm";
 
-// isolated DB before any module that imports lib/db loads. `bun test` runs every file in one
-// process, so lib/db is opened once with the FIRST file's path: agree on that path (??=) and
-// only clean up on process exit — deleting it in afterAll pulls the file out from under the
-// still-open connection and every later DB test fails with SQLITE_IOERR.
-const tmpDir = mkdtempSync(join(tmpdir(), "openslop-ugc-trigger-"));
-process.env.OPENSLOP_DB_PATH ??= join(tmpDir, "test.sqlite");
-process.on("exit", () => {
-  try {
-    rmSync(tmpDir, { recursive: true, force: true });
-  } catch {}
-});
-
+// Tests run against Neon (DATABASE_URL, migrated) — no local sqlite file.
 const [{ db }, schema] = await Promise.all([import("../../lib/db"), import("../../db/schema")]);
-
-// `company` is the only table lib/db does not create lazily
-try {
-  await db.run(`CREATE TABLE IF NOT EXISTS company (id text PRIMARY KEY, user_id text NOT NULL, name text NOT NULL, website text NOT NULL, persona text, created_at text NOT NULL, updated_at text NOT NULL)`);
-} catch {
-  /* already exists */
-}
 
 // Only the two seams around the trigger are mocked:
 // - the Brand Intelligence workflow (we seed the finished document instead of running it)
@@ -103,7 +82,7 @@ describe("runBrandAnalysis triggers automatic content generation (spec test 1)",
     expect(job).not.toBeNull();
     expect(job.type).toBe("initial_content_generation");
     expect(job.userId).toBe("u1");
-    expect(Number(job.targetCount)).toBeGreaterThanOrEqual(100);
+    expect(Number(job.targetCount)).toBeGreaterThanOrEqual(20);
     // the Brand Intelligence run itself is untouched: still "ready", no error surfaced
     const [doc] = (await db.select().from(schema.brandIntelligence).where(eq(schema.brandIntelligence.companyId, "brand-ready"))) as any[];
     expect(doc.status).toBe("ready");

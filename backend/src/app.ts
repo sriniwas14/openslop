@@ -16,6 +16,7 @@ import { templateRoutes } from "./modules/templates/templates.routes";
 import { influencerRoutes } from "./modules/influencer/influencer.routes";
 import { instagramRoutes } from "./modules/instagram/instagram.routes";
 import { libraryRoutes } from "./modules/library/library.routes";
+import { memesRoutes } from "./modules/memes/memes.routes";
 import { ugcRoutes } from "./modules/ugc/ugc.routes";
 import { visualRoutes } from "./modules/visual/visual.routes";
 import { startMediaWorker } from "./modules/media/media.service";
@@ -139,6 +140,7 @@ export function createApp() {
   app.register(influencerRoutes);
   app.register(instagramRoutes);
   app.register(libraryRoutes);
+  app.register(memesRoutes);
   app.register(ugcRoutes);
   app.register(visualRoutes);
   const stopMediaWorker = startMediaWorker();

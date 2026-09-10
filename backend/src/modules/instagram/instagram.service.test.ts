@@ -1,20 +1,6 @@
-import { describe, expect, it, beforeAll } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, expect, it } from "bun:test";
 
-// isolated DB before any module that imports lib/db loads. `bun test` runs every file in one
-// process, so lib/db is opened once with the FIRST file's path: agree on that path (??=) and
-// only clean up on process exit — deleting it in afterAll pulls the file out from under the
-// still-open connection and every later DB test fails with SQLITE_IOERR.
-const tmpDir = mkdtempSync(join(tmpdir(), "openslop-test-"));
-process.env.OPENSLOP_DB_PATH ??= join(tmpDir, "test.sqlite");
-process.on("exit", () => {
-  try {
-    rmSync(tmpDir, { recursive: true, force: true });
-  } catch {}
-});
-
+// Tests run against Neon (DATABASE_URL, migrated) — no local sqlite file.
 const [{ db }, schema] = await Promise.all([
   import("../../lib/db"),
   import("../../db/schema"),
@@ -40,21 +26,6 @@ function fakeScrape(posts: any[]) {
 }
 
 describe("scrapeAndStorePosts", () => {
-  beforeAll(async () => {
-    // create tables via raw DDL (same shape as schema)
-    for (const sql of [
-      `CREATE TABLE IF NOT EXISTS company (id text PRIMARY KEY, user_id text NOT NULL, name text, website text, persona text, created_at text, updated_at text)`,
-      `CREATE TABLE IF NOT EXISTS social_credential (id text PRIMARY KEY, user_id text NOT NULL, provider text DEFAULT 'apify' NOT NULL, api_key text NOT NULL, created_at text, updated_at text)`,
-      `CREATE TABLE IF NOT EXISTS instagram_source (id text PRIMARY KEY, user_id text NOT NULL, company_id text NOT NULL, username text NOT NULL, profile_url text NOT NULL, display_name text, status text, last_scraped_at text, created_at text, updated_at text)`,
-      `CREATE TABLE IF NOT EXISTS instagram_post (id text PRIMARY KEY, user_id text NOT NULL, company_id text NOT NULL, source_id text NOT NULL, external_post_id text NOT NULL, shortcode text, post_url text, username text, owner_full_name text, caption text, media_type text, media_url text, thumbnail_url text, published_at text, likes text, comments text, shares text, views text, hashtags text, mentions text, source text, raw_data text, scraped_at text, created_at text, updated_at text)`,
-      `CREATE TABLE IF NOT EXISTS instagram_scrape_job (id text PRIMARY KEY, user_id text NOT NULL, company_id text NOT NULL, source_id text NOT NULL, actor_id text NOT NULL, apify_run_id text, dataset_id text, status text, posts_found text, error text, started_at text, completed_at text, created_at text)`,
-    ]) {
-      try {
-        await db.run(sql);
-      } catch {}
-    }
-  });
-
   it("requires a stored Apify key", async () => {
     await resetDb();
     const [comp] = await db.insert(schema.companies).values({ userId: "u1", name: "C", website: "https://c.com" }).returning();
@@ -98,7 +69,7 @@ describe("scrapeAndStorePosts", () => {
     expect(r2.newCount).toBe(0);
 
     // count distinct rows — should be 2 after dedup, not 4
-    const all = (await db.select().from(schema.instagramPosts).all()) as any[];
+    const all = (await db.select().from(schema.instagramPosts)) as any[];
     expect(all.length).toBe(2);
   });
 
@@ -115,11 +86,11 @@ describe("scrapeAndStorePosts", () => {
     const rb = await scrapeAndStorePosts({ userId: "u2", companyId: (cB as any).id, creator: "nike", resultsLimit: 10, scrapeFn: fakeScrape(posts) });
 
     // distinct creators (one per workspace) and distinct posts
-    const sources = (await db.select().from(schema.instagramSources).all()) as any[];
+    const sources = (await db.select().from(schema.instagramSources)) as any[];
     expect(sources.length).toBe(2);
     expect(ra.sourceId).not.toBe(rb.sourceId);
 
-    const allPosts = (await db.select().from(schema.instagramPosts).all()) as any[];
+    const allPosts = (await db.select().from(schema.instagramPosts)) as any[];
     expect(allPosts.length).toBe(2);
     expect(new Set(allPosts.map((p: any) => p.companyId)).size).toBe(2);
   });

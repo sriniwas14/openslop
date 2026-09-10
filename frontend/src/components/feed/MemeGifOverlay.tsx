@@ -1,16 +1,18 @@
 import { useState } from 'react'
-import { cn } from '@/lib/utils'
+import { cn, proxiedMediaUrl } from '@/lib/utils'
 import { MEME_GIF_COMPOSITION } from '@/components/feed/overlayConfig'
 
 // ---------------------------------------------------------------------------
-// Layer 3 of the meme composition — the GIF from the stored `meme_url`,
+// Layer 3 of the meme composition — the meme from the stored `meme_url`,
 // overlaid ABOVE the base image (Layer 1) and the overlay text (Layer 2).
 //
 // Same composition coordinate system as the text overlay: position is the
 // centre anchor in % of the container, rendered with
-// translate(-50%, -50%). A plain <img> preserves GIF animation. Width is
-// 70% of the composition; aspect ratio is never distorted (object-contain
-// + max-height cap). Hidden when there is no meme_url or it fails to load.
+// translate(-50%, -50%). Images (incl. GIFs) render as <img> to preserve
+// animation; video memes (.mp4/.mov/.webm) render as a looping muted
+// <video>. Width is 70% of the composition; aspect ratio is never
+// distorted (object-contain + max-height cap). Hidden when there is no
+// meme_url or it fails to load.
 // ---------------------------------------------------------------------------
 
 export type MemeGifLayer = {
@@ -23,6 +25,12 @@ export type MemeGifLayer = {
 export const DEFAULT_MEME_GIF_LAYER: MemeGifLayer = {
   x: MEME_GIF_COMPOSITION.x,
   y: MEME_GIF_COMPOSITION.y,
+}
+
+/** Video memes (R2 .mp4s) need a <video> element — <img> renders them broken. */
+export function isMemeVideoSrc(src: string): boolean {
+  const path = src.split('?')[0].split('#')[0].toLowerCase()
+  return path.endsWith('.mp4') || path.endsWith('.mov') || path.endsWith('.webm')
 }
 
 export default function MemeGifOverlay({
@@ -59,10 +67,68 @@ export default function MemeGifOverlay({
   if (!src || failed) return null
 
   const interactive = draggable && !disabled && !!onPatch
+  const overlayClass = cn(
+    'absolute z-20 -translate-x-1/2 -translate-y-1/2 object-contain select-none',
+    interactive ? 'cursor-move touch-none' : 'pointer-events-none',
+    selected && interactive && 'ring-2 ring-primary/80',
+  )
+  const overlayStyle = {
+    left: `${layer.x}%`,
+    top: `${layer.y}%`,
+    width: `${MEME_GIF_COMPOSITION.widthPct * 100}%`,
+    maxHeight: `${MEME_GIF_COMPOSITION.maxHeightPct * 100}%`,
+  }
+
+  if (isMemeVideoSrc(src)) {
+    return (
+      <video
+        src={proxiedMediaUrl(src)}
+        aria-label={alt}
+        autoPlay
+        loop
+        muted
+        playsInline
+        crossOrigin="anonymous"
+        draggable={false}
+        onError={() => setFailed(true)}
+        onPointerDown={
+          !interactive
+            ? undefined
+            : (e) => {
+                e.stopPropagation()
+                onSelect?.(true)
+                // The composition container is the direct parent — resolve the
+                // drag offset against its rect so movement stays in % coords.
+                const rect = (e.currentTarget.parentElement ?? e.currentTarget).getBoundingClientRect()
+                setDrag({
+                  dx: e.clientX - rect.left - (layer.x / 100) * rect.width,
+                  dy: e.clientY - rect.top - (layer.y / 100) * rect.height,
+                })
+              }
+        }
+        onPointerMove={
+          !interactive
+            ? undefined
+            : (e) => {
+                if (!drag) return
+                const rect = (e.currentTarget.parentElement ?? e.currentTarget).getBoundingClientRect()
+                if (rect.width <= 0 || rect.height <= 0) return
+                const nx = ((e.clientX - rect.left - drag.dx) / rect.width) * 100
+                const ny = ((e.clientY - rect.top - drag.dy) / rect.height) * 100
+                onPatch?.({ x: Math.min(100, Math.max(0, nx)), y: Math.min(100, Math.max(0, ny)) })
+              }
+        }
+        onPointerUp={!interactive ? undefined : () => setDrag(null)}
+        onPointerCancel={!interactive ? undefined : () => setDrag(null)}
+        className={overlayClass}
+        style={overlayStyle}
+      />
+    )
+  }
 
   return (
     <img
-      src={src}
+      src={proxiedMediaUrl(src)}
       alt={alt}
       draggable={false}
       onError={() => setFailed(true)}
@@ -96,17 +162,8 @@ export default function MemeGifOverlay({
       }
       onPointerUp={!interactive ? undefined : () => setDrag(null)}
       onPointerCancel={!interactive ? undefined : () => setDrag(null)}
-      className={cn(
-        'absolute z-20 -translate-x-1/2 -translate-y-1/2 object-contain select-none',
-        interactive ? 'cursor-move touch-none' : 'pointer-events-none',
-        selected && interactive && 'ring-2 ring-primary/80',
-      )}
-      style={{
-        left: `${layer.x}%`,
-        top: `${layer.y}%`,
-        width: `${MEME_GIF_COMPOSITION.widthPct * 100}%`,
-        maxHeight: `${MEME_GIF_COMPOSITION.maxHeightPct * 100}%`,
-      }}
+      className={overlayClass}
+      style={overlayStyle}
     />
   )
 }

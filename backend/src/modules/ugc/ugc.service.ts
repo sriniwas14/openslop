@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "../../lib/db";
+import { shuffleInPlace } from "../../lib/shuffle";
 import { companies, contentGenerationJobs, generatedContents } from "../../db/schema";
 import type { ContentAngle } from "../brand/brand.schemas";
 import { buildBrandContextPrompt, extractJson, getBrandContext, type BrandContext } from "../brand/brand.service";
 import { PROMPT_VERSION, UGC_CREATOR_SYSTEM_PROMPT, buildUgcBatchPrompt, type ContentSlot } from "./ugc.prompts";
-import { MEME_LIBRARY, MEME_VARIATIONS_PER_MEME, type MemeEntry } from "./meme.library";
+import { MEME_VARIATIONS_PER_MEME, type MemeEntry } from "./meme.library";
+import { listMemes } from "./meme.store";
 import { buildMemeBackgroundQueries } from "../visual/visual.queries";
 import {
   MEME_CREATOR_SYSTEM_PROMPT,
@@ -47,7 +49,7 @@ import {
 // rows with visualAssetId IS NULL. brandId === companyId in this codebase.
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_TARGET_COUNT = 100;
+export const DEFAULT_TARGET_COUNT = 20;
 export const JOB_TYPE_INITIAL = "initial_content_generation";
 
 const BATCH_SIZE = 5; // pieces per AI call
@@ -780,7 +782,8 @@ export async function generateMemeBrandContent(opts: GenerateMemeOptions): Promi
   const { companyId, userId } = opts;
   const generateFn = opts.generateFn ?? aiMemeBatchGenerator;
   const concurrency = Math.max(1, opts.concurrency ?? CONCURRENCY);
-  const targetCount = MEME_LIBRARY.length * MEME_VARIATIONS_PER_MEME;
+  const library = await listMemes();
+  const targetCount = library.length * MEME_VARIATIONS_PER_MEME;
 
   const [company] = await db.select().from(companies).where(and(eq(companies.id, companyId), eq(companies.userId, userId)));
   if (!company) throw new UgcError("Company not found", 404);
@@ -824,12 +827,16 @@ export async function generateMemeBrandContent(opts: GenerateMemeOptions): Promi
     const overlays: string[] = [];
     let model: string | null = null;
 
-    let pending: { meme: MemeEntry; note: string | null }[] = MEME_LIBRARY.map((meme) => ({ meme, note: null }));
+    let pending: { meme: MemeEntry; note: string | null }[] = shuffleInPlace(library.map((meme) => ({ meme, note: null })));
     let round = 0;
 
     while (pending.length && round < MAX_ROUNDS) {
       round++;
       const next: typeof pending = [];
+      // validated sets are buffered per round and inserted round-robin by variation
+      // index across randomly ordered memes — otherwise the DB (createdAt) order is
+      // 5 same-meme rows back-to-back and every createdAt-ordered view clusters.
+      const ready: { meme: MemeEntry; checked: { variation: MemeVariation; hash: string; tokens: string[] }[]; model: string | null }[] = [];
 
       for (const group of chunk(pending, concurrency)) {
         const settled = await Promise.allSettled(
@@ -841,9 +848,8 @@ export async function generateMemeBrandContent(opts: GenerateMemeOptions): Promi
               recentOverlays: overlays.slice(-RECENT_IN_PROMPT),
               attemptNote: note,
             });
-            if (usedModel) model = usedModel;
             const parsed = parseMemeVariations(raw);
-            if (!parsed.ok) return { meme, ok: false as const, reason: parsed.reason, saved: [] as string[] };
+            if (!parsed.ok) return { meme, ok: false as const, reason: parsed.reason, checked: [] as { variation: MemeVariation; hash: string; tokens: string[] }[], model: usedModel ?? null };
 
             const vctx: MemeValidationContext = { brandText, allowedPhrases, memory };
             const ordered = [...parsed.variations].sort((a, b) => a.variation_id - b.variation_id);
@@ -852,30 +858,45 @@ export async function generateMemeBrandContent(opts: GenerateMemeOptions): Promi
             const checked: { variation: MemeVariation; hash: string; tokens: string[] }[] = [];
             for (let i = 0; i < ordered.length; i++) {
               const res = validateMemeVariation(ordered[i], meme, i, vctx);
-              if (!res.ok) return { meme, ok: false as const, reason: res.reason, saved: [] as string[] };
+              if (!res.ok) return { meme, ok: false as const, reason: res.reason, checked: [] as { variation: MemeVariation; hash: string; tokens: string[] }[], model: usedModel ?? null };
               checked.push({ variation: ordered[i], hash: res.hash, tokens: res.tokens });
             }
-            const saved: string[] = [];
-            for (const { variation, hash, tokens } of checked) {
-              const inserted = await insertMemeContent({ userId, companyId, jobId, meme, variation, hash, model });
-              if (!inserted) return { meme, ok: false as const, reason: "an identical overlay is already saved for this brand", saved };
-              memory.hashes.add(hash);
-              memory.tokens.push(tokens);
-              memory.hooks.push(variation.overlay_text);
-              overlays.push(variation.overlay_text.slice(0, 160));
-              saved.push(variation.overlay_text);
-            }
-            return { meme, ok: true as const, reason: null as string | null, saved };
+            return { meme, ok: true as const, reason: null as string | null, checked, model: usedModel ?? null };
           }),
         );
         settled.forEach((res, i) => {
           if (res.status === "fulfilled") {
-            if (!res.value.ok) next.push({ meme: res.value.meme, note: res.value.reason });
+            if (res.value.ok) ready.push({ meme: res.value.meme, checked: res.value.checked, model: res.value.model });
+            else next.push({ meme: res.value.meme, note: res.value.reason });
           } else {
             const reason = String((res.reason as any)?.message ?? "generation failed").slice(0, 200);
             next.push({ meme: group[i].meme, note: `the previous attempt failed (${reason})` });
           }
         });
+      }
+
+      // interleave the round's inserts: variation 1 of every meme, then variation 2…
+      const failedMemes = new Set<string>();
+      for (const entry of shuffleInPlace(ready)) {
+        if (entry.model) model = entry.model;
+      }
+      const maxVars = Math.max(0, ...ready.map((r) => r.checked.length));
+      for (let vi = 0; vi < maxVars; vi++) {
+        for (const entry of ready) {
+          if (failedMemes.has(entry.meme.id)) continue;
+          const c = entry.checked[vi];
+          if (!c) continue;
+          const inserted = await insertMemeContent({ userId, companyId, jobId, meme: entry.meme, variation: c.variation, hash: c.hash, model });
+          if (!inserted) {
+            failedMemes.add(entry.meme.id);
+            next.push({ meme: entry.meme, note: "an identical overlay is already saved for this brand" });
+            continue;
+          }
+          memory.hashes.add(c.hash);
+          memory.tokens.push(c.tokens);
+          memory.hooks.push(c.variation.overlay_text);
+          overlays.push(c.variation.overlay_text.slice(0, 160));
+        }
       }
 
       const total = await countGeneratedContent(companyId);

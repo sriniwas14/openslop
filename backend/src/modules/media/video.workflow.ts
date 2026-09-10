@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createWorkflow, createStep } from "@mastra/core/workflows";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { mkdir, writeFile, readFile, unlink } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
@@ -149,9 +149,9 @@ async function tryUploadToRunway(pngPath: string, apiKey: string): Promise<strin
 async function ensureDurationColumn() {
   try {
     // ponytail: existing DBs prior to duration column — add lazily
-    await db.run(`ALTER TABLE content ADD COLUMN duration TEXT` as any);
+    await db.execute(sql`ALTER TABLE content ADD COLUMN duration TEXT`);
   } catch {}
-  try { await db.run(`ALTER TABLE content ADD COLUMN influencer_id TEXT` as any); } catch {}
+  try { await db.execute(sql`ALTER TABLE content ADD COLUMN influencer_id TEXT`); } catch {}
 }
 
 async function influencerToDataUri(influencerId: string, userId: string): Promise<string | null> {

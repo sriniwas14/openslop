@@ -1,6 +1,7 @@
 import type { OverlayBlock } from '@/components/feed/MediaTextOverlay'
 import { computeOverlayLayout, HIGHLIGHT, MEME_GIF_COMPOSITION } from '@/components/feed/overlayConfig'
-import type { MemeGifLayer } from '@/components/feed/MemeGifOverlay'
+import { isMemeVideoSrc, type MemeGifLayer } from '@/components/feed/MemeGifOverlay'
+import { proxiedMediaUrl } from '@/lib/utils'
 
 // ---------------------------------------------------------------------------
 // Client-side export — bakes overlay text layers into the downloaded file so
@@ -15,9 +16,10 @@ import type { MemeGifLayer } from '@/components/feed/MemeGifOverlay'
 // Videos record to WebM via canvas.captureStream, then POST to
 // /media/convert for an ffmpeg H.264 MP4 that IG/TikTok accept.
 //
-// Meme posts additionally bake the Layer 3 GIF's first frame (an animated
-// GIF cannot survive a PNG/WebM-canvas export — the still frame is the
-// documented fallback), composited UNDER the text like the live preview.
+// Meme posts additionally bake Layer 3 (GIF first frame, or the video
+// meme's current frame — animated GIF/video cannot survive a PNG export,
+// so the still frame is the documented fallback), composited UNDER the
+// text like the live preview.
 // ---------------------------------------------------------------------------
 
 export type ExportFormatId = '9:16' | '1:1' | '4:5'
@@ -39,11 +41,8 @@ export type ExportInput = {
 }
 
 function proxied(url: string): string {
-  // Same-origin / embedded sources never taint the canvas — fetch directly.
-  // Remote http(s) goes through the backend proxy so baked text survives.
-  if (url.startsWith('data:') || url.startsWith('blob:') || url.startsWith('/') || url.startsWith(window.location.origin)) return url
-  if (/^https?:\/\//i.test(url)) return `/media/proxy?url=${encodeURIComponent(url)}`
-  return url
+  // ponytail: single helper in lib/utils — same-origin stays direct, remote via /media/proxy.
+  return proxiedMediaUrl(url)
 }
 
 function loadImage(url: string): Promise<HTMLImageElement> {
@@ -167,16 +166,16 @@ function paintBlocks(ctx: CanvasRenderingContext2D, blocks: OverlayBlock[], W: n
   }
 }
 
-/** Paint the Layer 3 meme GIF first frame at its composition position. */
+/** Paint the Layer 3 meme (GIF first frame or video current frame) at its composition position. */
 function paintGifLayer(
   ctx: CanvasRenderingContext2D,
-  gif: HTMLImageElement,
+  gif: HTMLImageElement | HTMLVideoElement,
   gifLayer: MemeGifLayer | null | undefined,
   W: number,
   H: number,
 ) {
-  const gw = gif.naturalWidth || 0
-  const gh = gif.naturalHeight || 0
+  const gw = gif instanceof HTMLVideoElement ? gif.videoWidth : gif.naturalWidth
+  const gh = gif instanceof HTMLVideoElement ? gif.videoHeight : gif.naturalHeight
   if (!gw || !gh) return
   const layer = gifLayer ?? { x: MEME_GIF_COMPOSITION.x, y: MEME_GIF_COMPOSITION.y }
   // Same box as the preview: width 70% of the frame, aspect preserved,
@@ -194,9 +193,24 @@ function paintGifLayer(
   ctx.drawImage(gif, cx - dw / 2, cy - dh / 2, dw, dh)
 }
 
-async function loadGifFirstFrame(memeUrl: string | null | undefined): Promise<HTMLImageElement | null> {
+async function loadGifFirstFrame(memeUrl: string | null | undefined): Promise<HTMLImageElement | HTMLVideoElement | null> {
   if (!memeUrl) return null
   try {
+    if (isMemeVideoSrc(memeUrl)) {
+      // Video meme: seek to the first frame so a PNG export still bakes
+      // Layer 3, and a video export can play it live per frame.
+      const v = await loadVideo(memeUrl)
+      await new Promise<void>((resolve, reject) => {
+        v.onseeked = () => resolve()
+        v.onerror = () => reject(new Error('meme seek failed'))
+        try {
+          v.currentTime = Math.min(0.1, (v.duration || 1) / 2)
+        } catch {
+          resolve()
+        }
+      })
+      return v
+    }
     return await loadImage(memeUrl)
   } catch {
     return null // broken meme_url must never fail the whole export
@@ -258,6 +272,13 @@ export async function exportVideoWithOverlay(
   const { W, H } = EXPORT_FORMATS[format] ?? EXPORT_FORMATS['9:16']
   await ensureFont(700)
   const gif = await loadGifFirstFrame(input.memeUrl)
+  // Video memes animate during the recording — a paused first frame would
+  // bake as a still overlay for the whole clip.
+  if (gif instanceof HTMLVideoElement) {
+    gif.muted = true
+    gif.loop = true
+    await gif.play().catch(() => {})
+  }
 
   const canRecord =
     typeof HTMLCanvasElement !== 'undefined' &&
@@ -338,6 +359,13 @@ export async function exportVideoWithOverlay(
     v.pause()
   } catch {
     // Already stopped.
+  }
+  if (gif instanceof HTMLVideoElement) {
+    try {
+      gif.pause()
+    } catch {
+      // Already stopped.
+    }
   }
   // Flush the last painted frame before finalising.
   paint(ctx)

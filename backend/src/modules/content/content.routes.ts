@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { db } from "../../lib/db";
 import { companies, contents, contentTemplates, influencers } from "../../db/schema";
@@ -49,7 +49,7 @@ async function assertCompany(request: any, companyId: string) {
 
 // ponytail: lazy migrate — existing DBs predate template_id
 async function ensureContentColumns() {
-  try { await db.run(`ALTER TABLE content ADD COLUMN template_id TEXT` as any); } catch {}
+  try { await db.execute(sql`ALTER TABLE content ADD COLUMN template_id TEXT`); } catch {}
 }
 
 async function lookupTemplate(templateId?: string | null) {
@@ -59,7 +59,7 @@ async function lookupTemplate(templateId?: string | null) {
     return t ?? null;
   } catch (e: any) {
     if (String(e?.message ?? "").includes("no such table")) {
-      await db.run(`CREATE TABLE IF NOT EXISTS content_template (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, prompt TEXT NOT NULL, preview_image TEXT NOT NULL, duration TEXT NOT NULL DEFAULT '15', structure TEXT, style TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)` as any);
+      await db.execute(sql`CREATE TABLE IF NOT EXISTS content_template (id TEXT PRIMARY KEY NOT NULL, title TEXT NOT NULL, prompt TEXT NOT NULL, preview_image TEXT NOT NULL, duration TEXT NOT NULL DEFAULT '15', structure TEXT, style TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`);
       return null;
     }
     throw e;
@@ -151,8 +151,8 @@ export async function contentRoutes(app: FastifyInstance) {
         rows = await db.select().from(contents).where(where).orderBy(desc(contents.createdAt));
       } catch (e: any) {
         if (String(e?.message ?? "").includes("no such column")) {
-          try { await db.run(`ALTER TABLE content ADD COLUMN duration TEXT` as any); } catch {}
-          try { await db.run(`ALTER TABLE content ADD COLUMN influencer_id TEXT` as any); } catch {}
+          try { await db.execute(sql`ALTER TABLE content ADD COLUMN duration TEXT`); } catch {}
+          try { await db.execute(sql`ALTER TABLE content ADD COLUMN influencer_id TEXT`); } catch {}
           rows = await db.select().from(contents).where(where).orderBy(desc(contents.createdAt));
         } else throw e;
       }

@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { db } from "../../lib/db";
 import { aiConfigs, aiPreferences, companies, instagramPosts, mediaJobs } from "../../db/schema";
@@ -600,9 +600,8 @@ export async function aiRoutes(app: FastifyInstance) {
         }
       } catch (e: any) {
         try {
-          await db.run(
-            // @ts-ignore
-            `CREATE TABLE IF NOT EXISTS ai_preferences (user_id TEXT PRIMARY KEY, video_config_id TEXT, video_model TEXT, image_config_id TEXT, image_model TEXT, text_config_id TEXT, text_model TEXT, updated_at TEXT NOT NULL)`,
+          await db.execute(
+            sql`CREATE TABLE IF NOT EXISTS ai_preferences (user_id TEXT PRIMARY KEY, video_config_id TEXT, video_model TEXT, image_config_id TEXT, image_model TEXT, text_config_id TEXT, text_model TEXT, updated_at TEXT NOT NULL)`,
           );
           const [row] = await db
             .insert(aiPreferences)
@@ -643,7 +642,7 @@ export async function aiRoutes(app: FastifyInstance) {
         return { step: row.step, data: row.data, updatedAt: row.updatedAt } as any;
       } catch (e: any) {
         try {
-          await db.run(`CREATE TABLE IF NOT EXISTS onboarding_progress (user_id TEXT PRIMARY KEY, step TEXT NOT NULL DEFAULT '1', data TEXT, updated_at TEXT NOT NULL)` as any);
+          await db.execute(sql`CREATE TABLE IF NOT EXISTS onboarding_progress (user_id TEXT PRIMARY KEY, step TEXT NOT NULL DEFAULT '1', data TEXT, updated_at TEXT NOT NULL)`);
           return { step: "1", data: null, updatedAt: new Date().toISOString() } as any;
         } catch { return reply.status(500).send({ error: "failed" } as any); }
       }
@@ -666,7 +665,7 @@ export async function aiRoutes(app: FastifyInstance) {
       }
     } catch {
       try {
-        await db.run(`CREATE TABLE IF NOT EXISTS onboarding_progress (user_id TEXT PRIMARY KEY, step TEXT NOT NULL DEFAULT '1', data TEXT, updated_at TEXT NOT NULL)` as any);
+        await db.execute(sql`CREATE TABLE IF NOT EXISTS onboarding_progress (user_id TEXT PRIMARY KEY, step TEXT NOT NULL DEFAULT '1', data TEXT, updated_at TEXT NOT NULL)`);
         const { onboardingProgress } = await import("../../db/schema");
         const [row] = await db.insert(onboardingProgress).values({ userId: request.session!.user.id, step, data, updatedAt: new Date().toISOString() } as any).returning();
         return { step: row.step, data: row.data, updatedAt: row.updatedAt } as any;

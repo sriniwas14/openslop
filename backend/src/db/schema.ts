@@ -1,6 +1,6 @@
-import { index, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, pgTable, primaryKey, text, uniqueIndex } from "drizzle-orm/pg-core";
 
-export const aiConfigs = sqliteTable(
+export const aiConfigs = pgTable(
   "ai_config",
   {
     id: text("id")
@@ -30,7 +30,7 @@ export const aiConfigs = sqliteTable(
 );
 
 // ponytail: no DB-level FK — better-auth owns `user`; ownership is enforced in queries
-export const companies = sqliteTable(
+export const companies = pgTable(
   "company",
   {
     id: text("id")
@@ -51,9 +51,9 @@ export const companies = sqliteTable(
 );
 
 // ponytail: Brand Intelligence ("Brand Brain") — 1:1 with company (brandId === companyId).
-// Sections stored as JSON text (sqlite has no native JSON); zod validates each shape on read/write.
+// Sections stored as JSON text; zod validates each shape on read/write.
 // Arrays of objects (contentAngles, customerSegments, competitors) carry stable ids for item-level CRUD.
-export const brandIntelligence = sqliteTable(
+export const brandIntelligence = pgTable(
   "brand_intelligence",
   {
     id: text("id")
@@ -84,8 +84,8 @@ export const brandIntelligence = sqliteTable(
   ],
 );
 
-// ponytail: single table — JSON stored as text (sqlite has no native JSON); zod validates kind-specific shapes
-export const contents = sqliteTable(
+// ponytail: single table — JSON stored as text; zod validates kind-specific shapes
+export const contents = pgTable(
   "content",
   {
     id: text("id")
@@ -124,7 +124,7 @@ export const contents = sqliteTable(
 // and contentAngleId points at an id inside brand_intelligence.content_angles — the brand
 // document is never copied into these rows. Stores text + visual SEARCH metadata only; the
 // later Visual Content Studio fills visualIntentId / visualAssetId (both nullable for now).
-export const generatedContents = sqliteTable(
+export const generatedContents = pgTable(
   "generated_content",
   {
     id: text("id")
@@ -200,7 +200,7 @@ export const generatedContents = sqliteTable(
 // (source, sourceAssetId) so re-running visual search reuses an existing asset instead of
 // inserting duplicates. GeneratedContent.visualAssetId points here. Remote URLs are stored;
 // localUrl is a best-effort cached copy under /media/files for the future composition stage.
-export const visualAssets = sqliteTable(
+export const visualAssets = pgTable(
   "visual_asset",
   {
     id: text("id")
@@ -236,7 +236,7 @@ export const visualAssets = sqliteTable(
 // ponytail: one row per (brand, day, batch) of the visual discovery feed. cursorKey is the
 // incoming cursor token ("start" for the first batch) — the unique index makes a repeated
 // prefetch of the same batch a no-op (duplicate-request guard, mirrors instagram scrape jobs).
-export const visualSearchBatches = sqliteTable(
+export const visualSearchBatches = pgTable(
   "visual_search_batch",
   {
     id: text("id")
@@ -271,7 +271,7 @@ export const visualSearchBatches = sqliteTable(
 
 // ponytail: daily preparation counter per brand — caps visual/feed preparation at
 // dailyLimit (100) items per day. One row per (company, date); resets naturally next day.
-export const visualFeedDaily = sqliteTable(
+export const visualFeedDaily = pgTable(
   "visual_feed_daily",
   {
     companyId: text("company_id").notNull(),
@@ -292,7 +292,7 @@ export const visualFeedDaily = sqliteTable(
 
 // ponytail: one row per (company, type) — reused/resumed rather than duplicated, so a crashed
 // or restarted run continues from the content already saved instead of starting over.
-export const contentGenerationJobs = sqliteTable(
+export const contentGenerationJobs = pgTable(
   "content_generation_job",
   {
     id: text("id")
@@ -324,7 +324,7 @@ export const contentGenerationJobs = sqliteTable(
 );
 
 // ponytail: per-task routing — provider + model independent; model string per task
-export const aiPreferences = sqliteTable("ai_preferences", {
+export const aiPreferences = pgTable("ai_preferences", {
   userId: text("user_id").primaryKey(),
   videoConfigId: text("video_config_id"),
   videoModel: text("video_model"),
@@ -338,7 +338,7 @@ export const aiPreferences = sqliteTable("ai_preferences", {
 });
 
 // ponytail: onboarding resume — single row per user, JSON blob for partial progress
-export const onboardingProgress = sqliteTable("onboarding_progress", {
+export const onboardingProgress = pgTable("onboarding_progress", {
   userId: text("user_id").primaryKey(),
   step: text("step").notNull().default("1"),
   data: text("data"), // JSON string
@@ -347,7 +347,7 @@ export const onboardingProgress = sqliteTable("onboarding_progress", {
     .$defaultFn(() => new Date().toISOString()),
 });
 
-export const mediaJobs = sqliteTable(
+export const mediaJobs = pgTable(
   "media_job",
   {
     id: text("id")
@@ -385,7 +385,7 @@ export const mediaJobs = sqliteTable(
 );
 
 // ponytail: integrations credentials — per-user Apify token, masked on read (see ai_config pattern)
-export const socialCredentials = sqliteTable(
+export const socialCredentials = pgTable(
   "social_credential",
   {
     id: text("id")
@@ -405,7 +405,7 @@ export const socialCredentials = sqliteTable(
 );
 
 // ponytail: Instagram creator — scoped to company (workspace-like) + user
-export const instagramSources = sqliteTable(
+export const instagramSources = pgTable(
   "instagram_source",
   {
     id: text("id")
@@ -433,7 +433,7 @@ export const instagramSources = sqliteTable(
 );
 
 // ponytail: Instagram post — dedup key is company_id + external_post_id (shortcode)
-export const instagramPosts = sqliteTable(
+export const instagramPosts = pgTable(
   "instagram_post",
   {
     id: text("id")
@@ -478,7 +478,7 @@ export const instagramPosts = sqliteTable(
 );
 
 // ponytail: scrape job tracking for cost/usage visibility and duplicate-request guard
-export const instagramScrapeJobs = sqliteTable(
+export const instagramScrapeJobs = pgTable(
   "instagram_scrape_job",
   {
     id: text("id")
@@ -508,9 +508,9 @@ export const instagramScrapeJobs = sqliteTable(
 // ponytail: Library — DB-backed saved posts + media bank, scoped by (user, brand).
 // brandId === companyId; ownership enforced in queries via the parent company row.
 // Overlay layers (blocks/gifLayer) stored as JSON text; aspect + size as TEXT like
-// the rest of the sqlite schema (numbers-as-text convention). Edited replacements
+// the rest of the schema (numbers-as-text convention). Edited replacements
 // and uploads live under data/media via edited_file / file_url (/media/files/...).
-export const libraryPosts = sqliteTable(
+export const libraryPosts = pgTable(
   "library_post",
   {
     id: text("id")
@@ -552,7 +552,7 @@ export const libraryPosts = sqliteTable(
   ],
 );
 
-export const libraryMedia = sqliteTable(
+export const libraryMedia = pgTable(
   "library_media",
   {
     id: text("id")
@@ -589,7 +589,7 @@ export type InstagramSource = typeof instagramSources.$inferSelect;
 export type InstagramPost = typeof instagramPosts.$inferSelect;
 export type InstagramScrapeJob = typeof instagramScrapeJobs.$inferSelect;
 
-export const influencers = sqliteTable(
+export const influencers = pgTable(
   "influencer",
   {
     id: text("id")
@@ -616,7 +616,7 @@ export const influencers = sqliteTable(
 );
 
 // ponytail: global visual styles — duration drives N=duration/5 video chunks
-export const contentTemplates = sqliteTable("content_template", {
+export const contentTemplates = pgTable("content_template", {
   id: text("id")
     .primaryKey()
     .$defaultFn(() => crypto.randomUUID()),
@@ -658,3 +658,20 @@ export type LibraryPost = typeof libraryPosts.$inferSelect;
 export type NewLibraryPost = typeof libraryPosts.$inferInsert;
 export type LibraryMedia = typeof libraryMedia.$inferSelect;
 export type NewLibraryMedia = typeof libraryMedia.$inferInsert;
+
+// ponytail: meme library lives in Postgres (Neon), not code — 3 fields only.
+// Name/tags used by the pipeline are derived in meme.store.ts (compat layer).
+export const memes = pgTable("memes", {
+  id: text("id").primaryKey(), // e.g. "dancing"
+  description: text("description").notNull(),
+  url: text("url").notNull(), // video file URL (mp4)
+  createdAt: text("created_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+  updatedAt: text("updated_at")
+    .notNull()
+    .$defaultFn(() => new Date().toISOString()),
+});
+
+export type Meme = typeof memes.$inferSelect;
+export type NewMeme = typeof memes.$inferInsert;

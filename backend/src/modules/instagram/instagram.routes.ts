@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { and, desc, eq, isNotNull } from "drizzle-orm";
+import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { db } from "../../lib/db";
 import {
@@ -24,18 +24,18 @@ import {
 // in the physical DB; mirror the content.routes.ts additive-migration pattern.
 async function ensureInstagramColumns() {
   try {
-    await db.run(`SELECT source, mentions FROM instagram_post LIMIT 0` as any);
+    await db.execute(sql`SELECT source, mentions FROM instagram_post LIMIT 0`);
   } catch {
     try {
-      await db.run(`ALTER TABLE instagram_post ADD COLUMN source text DEFAULT 'apify' NOT NULL` as any);
-      await db.run(`ALTER TABLE instagram_post ADD COLUMN mentions text` as any);
+      await db.execute(sql`ALTER TABLE instagram_post ADD COLUMN source text DEFAULT 'apify' NOT NULL`);
+      await db.execute(sql`ALTER TABLE instagram_post ADD COLUMN mentions text`);
     } catch {}
   }
   try {
-    await db.run(`SELECT saved_at FROM instagram_post LIMIT 0` as any);
+    await db.execute(sql`SELECT saved_at FROM instagram_post LIMIT 0`);
   } catch {
     try {
-      await db.run(`ALTER TABLE instagram_post ADD COLUMN saved_at text` as any);
+      await db.execute(sql`ALTER TABLE instagram_post ADD COLUMN saved_at text`);
     } catch {}
   }
 }

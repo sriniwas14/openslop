@@ -144,7 +144,20 @@ export function useContentFeed(companyId: string | null): ContentFeedState {
     void loadBatch(START_KEY, null, 'initial')
   }, [companyId, nonce, loadBatch])
 
-  const items = useMemo(() => chain.flatMap((k) => batches[k]?.items ?? []), [chain, batches])
+  // ponytail: server pages can still overlap across a snapshot expiry /
+  // server restart (fresh shuffle beats a 400) — dedupe by content id so
+  // React keys stay unique and posts are never duplicated/omitted.
+  const items = useMemo(() => {
+    const seen = new Set<string>()
+    const out: FeedItem[] = []
+    for (const it of chain.flatMap((k) => batches[k]?.items ?? [])) {
+      const id = it?.content?.id
+      if (!id || seen.has(id)) continue
+      seen.add(id)
+      out.push(it)
+    }
+    return out
+  }, [chain, batches])
   const lastKey = chain.length ? chain[chain.length - 1] : null
   const lastBatch = lastKey ? batches[lastKey] : null
   const hasMore = !!lastBatch?.hasMore
