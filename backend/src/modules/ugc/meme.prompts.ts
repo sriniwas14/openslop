@@ -1,6 +1,5 @@
 import { z } from "zod";
-import type { MemeEntry } from "./meme.library";
-import { MEME_VARIATIONS_PER_MEME } from "./meme.library";
+import { MEME_VARIATIONS_PER_MEME, type MemeEntry } from "./meme.store";
 
 // ponytail: Meme Engine prompt — the behavioral standard for meme-overlay generation.
 // The model must understand the meme (joke, reaction, emotion, pattern) from the

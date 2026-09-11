@@ -82,7 +82,25 @@ export async function companyRoutes(app: FastifyInstance) {
         }
 
         if (personaOk) {
-          if (!closed) write("done", fresh ?? curPersona!);
+          const doneRow = fresh ?? curPersona!;
+          try {
+            // ponytail: reuse brand pipeline — fire-and-forget so brand never fails onboarding
+            if ((doneRow.website ?? "").trim()) {
+              const { ensureAnalyzingRow, runBrandAnalysis } = await import("../brand/brand.service");
+              await ensureAnalyzingRow(doneRow.id, request.session!.user.id);
+              void runBrandAnalysis({
+                companyId: doneRow.id,
+                userId: request.session!.user.id,
+                name: doneRow.name,
+                website: doneRow.website!,
+                extra: null,
+              }).catch(() => {});
+              if (!closed) write("progress", { type: "brand-analysis-started", companyId: doneRow.id });
+            }
+          } catch {
+            /* swallow — persona success stands, user can Re-analyze later */
+          }
+          if (!closed) write("done", doneRow);
         } else {
           // ponytail: atomic create — delete orphan so wizard doesn't complete
           await db.delete(companies).where(eq(companies.id, row.id)).catch(() => {});

@@ -1,114 +1,23 @@
 import { z } from "zod";
 import { createWorkflow, createStep } from "@mastra/core/workflows";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../../lib/db";
-import { aiConfigs, aiPreferences, companies } from "../../db/schema";
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import { companies } from "../../db/schema";
 import { createOpenAI } from "@ai-sdk/openai";
-import { createOllama } from "ollama-ai-provider-v2";
-import { DISCOVERY_ONLY_PROVIDERS, type AiProvider } from "../../lib/mastra";
+import { env } from "../../env";
 
 export type TaskKind = "video" | "image" | "text" | "default";
 
-function assertChatProvider(provider: string) {
-  if (DISCOVERY_ONLY_PROVIDERS.has(provider as AiProvider)) {
-    throw new Error(`${provider} is configured for model discovery only; media generation adapters are not enabled yet`);
-  }
-}
-
-// ponytail: fail fast on a missing/truncated key — otherwise the upstream 401
-// ("Missing Authentication header") surfaces with no hint about which setting to fix
-function requireApiKey(provider: string, apiKey: string | null | undefined): string {
-  if (provider === "ollama" || provider === "custom") return apiKey ?? "not-set";
-  const key = (apiKey ?? "").trim();
-  if (!key) throw new Error(`${provider} API key is missing — set it in Settings → AI Providers`);
-  // ponytail: real keys are 40+ chars (openrouter ~73, openai ~51, anthropic 100+);
-  // google AI Studio keys are 39. Anything shorter is a truncated paste.
-  const min = provider === "google" ? 30 : 40;
-  if (key.length < min)
-    throw new Error(`${provider} API key looks incomplete (${key.length} chars) — paste the full key in Settings → AI Providers`);
-  return key;
-}
-
-// ponytail: strict DB-only — no env fallback; provider-aware routing so openrouter key hits openrouter, not api.openai.com
-// task-aware: uses ai_preferences fallback to isDefault/first
-export async function resolveUserModel(userId: string, task: TaskKind = "default") {
-  // ponytail: provider+model independent — prefs hold per-task {configId, model}; config holds credentials
-  if (task !== "default") {
-    try {
-      const [pref] = await db.select().from(aiPreferences).where(eq(aiPreferences.userId, userId));
-      const pair =
-        task === "video" ? { id: pref?.videoConfigId ?? null, model: (pref as any)?.videoModel ?? null } :
-        task === "image" ? { id: pref?.imageConfigId ?? null, model: (pref as any)?.imageModel ?? null } :
-        { id: pref?.textConfigId ?? null, model: (pref as any)?.textModel ?? null };
-      if (pair.id && pair.model) {
-        const [row] = await db.select().from(aiConfigs).where(and(eq(aiConfigs.id, pair.id), eq(aiConfigs.userId, userId)));
-        if (row) {
-          const provider = row.provider as string;
-          assertChatProvider(provider);
-          const model = pair.model;
-          const apiKey = requireApiKey(provider, row.apiKey);
-          if (provider === "ollama") return createOllama(row.baseUrl ? { baseURL: row.baseUrl } : undefined)(model);
-          if (provider === "anthropic") {
-            if (row.baseUrl) return createOpenAI({ apiKey, baseURL: row.baseUrl })(model);
-            return createAnthropic({ apiKey })(model);
-          }
-          if (provider === "google") {
-            if (row.baseUrl) return createOpenAI({ apiKey, baseURL: row.baseUrl })(model);
-            return createGoogleGenerativeAI({ apiKey })(model);
-          }
-          const baseURL = row.baseUrl ?? (provider === "openrouter" ? "https://openrouter.ai/api/v1" : provider === "openai" ? "https://api.openai.com/v1" : provider === "xai" ? "https://api.x.ai/v1" : undefined);
-          return createOpenAI({ apiKey, baseURL })(model);
-        }
-      }
-      if (pair.id || pair.model) {
-        // partial — require both
-        throw new Error(`Configure ${task} provider + model in Settings → AI Providers (both required)`);
-      }
-    } catch (e: any) {
-      if (e?.message?.includes("Configure") || e?.message?.includes("media generation adapters") || e?.message?.includes("API key")) throw e;
-      // table missing before migration — fall through
-    }
-  }
-
-  // fallback: isDefault/first, uses its own model column (legacy)
-  let cfg: typeof aiConfigs.$inferSelect | undefined;
-  {
-    const [def] = await db
-      .select()
-      .from(aiConfigs)
-      .where(and(eq(aiConfigs.userId, userId), eq(aiConfigs.isDefault, "1")));
-    cfg = def ?? (await db.select().from(aiConfigs).where(eq(aiConfigs.userId, userId)).then((r) => r[0]));
-  }
-  if (!cfg?.model) throw new Error("No AI provider configured — add one in Settings → AI Providers and set as Default");
-  const provider = cfg.provider as string;
-  assertChatProvider(provider);
-  const model = cfg.model!;
-  const apiKey = requireApiKey(provider, cfg.apiKey);
-  if (provider === "ollama") {
-    return createOllama(cfg.baseUrl ? { baseURL: cfg.baseUrl } : undefined)(model);
-  }
-  if (provider === "anthropic") {
-    // ponytail: native anthropic client; baseUrl override via custom provider if needed
-    if (cfg.baseUrl) return createOpenAI({ apiKey, baseURL: cfg.baseUrl })(model);
-    return createAnthropic({ apiKey })(model);
-  }
-  if (provider === "google") {
-    if (cfg.baseUrl) return createOpenAI({ apiKey, baseURL: cfg.baseUrl })(model);
-    return createGoogleGenerativeAI({ apiKey })(model);
-  }
-  // openai/openrouter/xai/custom — OpenAI-compatible with provider-specific default baseURL
-  const baseURL =
-    cfg.baseUrl ??
-    (provider === "openrouter"
-      ? "https://openrouter.ai/api/v1"
-      : provider === "openai"
-        ? "https://api.openai.com/v1"
-        : provider === "xai"
-          ? "https://api.x.ai/v1"
-          : undefined);
-  return createOpenAI({ apiKey, baseURL })(model);
+// ponytail: server-managed keys — single OpenRouter key for all users (no per-user ai_config).
+// task-aware: model comes from env per task; userId kept in signature so callers don't change.
+export async function resolveUserModel(_userId: string, task: TaskKind = "default") {
+  const apiKey = (env.OPENROUTER_API_KEY ?? "").trim();
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY is missing — set it in backend/.env (see .env.example)");
+  const model =
+    task === "video" ? env.OPENROUTER_VIDEO_MODEL
+    : task === "image" ? env.OPENROUTER_IMAGE_MODEL
+    : env.OPENROUTER_TEXT_MODEL;
+  return createOpenAI({ apiKey, baseURL: "https://openrouter.ai/api/v1" })(model);
 }
 
 const fetchStep = createStep({

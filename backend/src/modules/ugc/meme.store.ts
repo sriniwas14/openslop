@@ -1,12 +1,20 @@
 import { asc } from "drizzle-orm";
 import { db } from "../../lib/db";
 import { memes } from "../../db/schema";
-import { MEME_LIBRARY, type MemeEntry } from "./meme.library";
 
-// ponytail: memes live in Postgres (Neon), not code. The table has exactly
-// 3 fields (id, description, url); name/tags the pipeline needs are derived
-// here so prompts/validation keep working unchanged. Empty table or DB error
-// falls back to the in-code constant so generation never hard-fails.
+// ponytail: memes live in Postgres (Neon) only — no in-code fallback library.
+// The table has exactly 3 fields (id, description, url); name/tags the pipeline
+// needs are derived here so prompts/validation keep working unchanged.
+export type MemeEntry = {
+  id: string;
+  meme: string;
+  meme_url: string;
+  meme_description: string;
+  meme_metadata: string[];
+};
+
+export const MEME_VARIATIONS_PER_MEME = 5;
+
 export function memeRowToEntry(row: { id: string; description: string; url: string }): MemeEntry {
   const name = row.id
     .split("-")
@@ -29,12 +37,8 @@ export function memeRowToEntry(row: { id: string; description: string; url: stri
   };
 }
 
+/** DB-only: empty table returns [] (caller throws 409); DB errors propagate. */
 export async function listMemes(): Promise<MemeEntry[]> {
-  try {
-    const rows = await db.select().from(memes).orderBy(asc(memes.id));
-    if (!rows.length) return MEME_LIBRARY;
-    return rows.map(memeRowToEntry);
-  } catch {
-    return MEME_LIBRARY;
-  }
+  const rows = await db.select().from(memes).orderBy(asc(memes.id));
+  return rows.map(memeRowToEntry);
 }

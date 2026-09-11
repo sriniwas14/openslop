@@ -22,9 +22,9 @@ export function FeedEmptyState({ onReload }: { onReload?: () => void }) {
           <Sparkles className="size-8 text-primary" />
         </div>
         <div>
-          <h3 className="text-lg font-semibold">No content yet</h3>
+          <h3 className="text-lg font-semibold">No posts yet</h3>
           <p className="mt-1 text-sm text-muted-foreground">
-            Generated content will appear here once your brand has posts ready for visual discovery.
+            New posts will show up here when they're ready.
           </p>
         </div>
         {onReload && (

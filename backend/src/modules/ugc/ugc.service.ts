@@ -6,8 +6,7 @@ import { companies, contentGenerationJobs, generatedContents } from "../../db/sc
 import type { ContentAngle } from "../brand/brand.schemas";
 import { buildBrandContextPrompt, extractJson, getBrandContext, type BrandContext } from "../brand/brand.service";
 import { PROMPT_VERSION, UGC_CREATOR_SYSTEM_PROMPT, buildUgcBatchPrompt, type ContentSlot } from "./ugc.prompts";
-import { MEME_VARIATIONS_PER_MEME, type MemeEntry } from "./meme.library";
-import { listMemes } from "./meme.store";
+import { MEME_VARIATIONS_PER_MEME, listMemes, type MemeEntry } from "./meme.store";
 import { buildMemeBackgroundQueries } from "../visual/visual.queries";
 import {
   MEME_CREATOR_SYSTEM_PROMPT,
@@ -58,7 +57,7 @@ const MAX_ROUNDS = 4; // initial pass + regeneration passes for failed/duplicate
 const RECENT_LIMIT = 40; // rows loaded per angle for dedupe + prompt context
 const RECENT_IN_PROMPT = 20; // how many of those are shown to the model
 const DUPLICATE_SIMILARITY = 0.75; // Jaccard threshold — "one word changed" is a duplicate
-const STALE_JOB_MS = 15 * 60 * 1000; // a "processing" job older than this can be taken over
+const STALE_JOB_MS = 45 * 60 * 1000; // a "processing" job older than this can be taken over (a 25-meme sequential run can exceed 15min)
 
 export class UgcError extends Error {
   status: number;
@@ -781,9 +780,12 @@ export type GenerateMemeOptions = {
 export async function generateMemeBrandContent(opts: GenerateMemeOptions): Promise<GenerationJobResult> {
   const { companyId, userId } = opts;
   const generateFn = opts.generateFn ?? aiMemeBatchGenerator;
-  const concurrency = Math.max(1, opts.concurrency ?? CONCURRENCY);
+  // ponytail: strictly sequential — opts.concurrency ignored on purpose so posts
+  // land 5 at a time instead of all-at-once after a parallel fan-out
   const library = (await listMemes()).slice(0, 25);
-  const targetCount = library.length;
+  if (!library.length) throw new UgcError("No memes in library — add via POST /memes", 409);
+  // ponytail: post units — 5 overlays per meme, so status progress matches visible posts
+  const targetCount = library.length * MEME_VARIATIONS_PER_MEME;
 
   const [company] = await db.select().from(companies).where(and(eq(companies.id, companyId), eq(companies.userId, userId)));
   if (!company) throw new UgcError("Company not found", 404);
@@ -824,87 +826,87 @@ export async function generateMemeBrandContent(opts: GenerateMemeOptions): Promi
     const allowedPhrases = [...(ctx.tone.wordsToUse ?? []), ...(ctx.tone.personality ?? [])];
     const brandText = brandBlock;
     const memory: DedupeMemory = { hashes: new Set(), tokens: [], hooks: [] };
+    // ponytail: validation sees the frozen pre-run snapshot (empty after the wipe),
+    // exactly like the old round-1 semantics — in-run outputs only steer the next
+    // prompt via recentOverlays. Cross-meme dupes are still caught at insert
+    // (contentHash unique guard) and retried.
+    const frozenMemory: DedupeMemory = { hashes: new Set(), tokens: [], hooks: [] };
     const overlays: string[] = [];
     let model: string | null = null;
 
-    let pending: { meme: MemeEntry; note: string | null }[] = shuffleInPlace(library.map((meme) => ({ meme, note: null })));
-    let round = 0;
+    let queue: { meme: MemeEntry; note: string | null; attempts: number }[] = shuffleInPlace(
+      library.map((meme) => ({ meme, note: null as string | null, attempts: 0 })),
+    );
 
-    while (pending.length && round < MAX_ROUNDS) {
-      round++;
-      const next: typeof pending = [];
-      // validated sets are buffered per round and inserted round-robin by variation
-      // index across randomly ordered memes — otherwise the DB (createdAt) order is
-      // 5 same-meme rows back-to-back and every createdAt-ordered view clusters.
-      const ready: { meme: MemeEntry; checked: { variation: MemeVariation; hash: string; tokens: string[] }[]; model: string | null }[] = [];
+    const runOneMeme = async ({ meme, note }: { meme: MemeEntry; note: string | null }) => {
+      const { variations: raw, model: usedModel } = await generateFn({
+        userId,
+        brandBlock,
+        meme,
+        recentOverlays: overlays.slice(-RECENT_IN_PROMPT),
+        attemptNote: note,
+      });
+      const parsed = parseMemeVariations(raw);
+      if (!parsed.ok)
+        return { ok: false as const, reason: parsed.reason, checked: [] as { variation: MemeVariation; hash: string; tokens: string[] }[], model: usedModel ?? null };
 
-      for (const group of chunk(pending, concurrency)) {
-        const settled = await Promise.allSettled(
-          group.map(async ({ meme, note }) => {
-            const { variations: raw, model: usedModel } = await generateFn({
-              userId,
-              brandBlock,
-              meme,
-              recentOverlays: overlays.slice(-RECENT_IN_PROMPT),
-              attemptNote: note,
-            });
-            const parsed = parseMemeVariations(raw);
-            if (!parsed.ok) return { meme, ok: false as const, reason: parsed.reason, checked: [] as { variation: MemeVariation; hash: string; tokens: string[] }[], model: usedModel ?? null };
-
-            const vctx: MemeValidationContext = { brandText, allowedPhrases, memory };
-            const ordered = [...parsed.variations].sort((a, b) => a.variation_id - b.variation_id);
-            // all-or-nothing per meme: a single bad variation fails the meme so the set
-            // stays at exactly 5 and the retry regenerates the whole meme
-            const checked: { variation: MemeVariation; hash: string; tokens: string[] }[] = [];
-            for (let i = 0; i < ordered.length; i++) {
-              const res = validateMemeVariation(ordered[i], meme, i, vctx);
-              if (!res.ok) return { meme, ok: false as const, reason: res.reason, checked: [] as { variation: MemeVariation; hash: string; tokens: string[] }[], model: usedModel ?? null };
-              checked.push({ variation: ordered[i], hash: res.hash, tokens: res.tokens });
-            }
-            return { meme, ok: true as const, reason: null as string | null, checked, model: usedModel ?? null };
-          }),
-        );
-        settled.forEach((res, i) => {
-          if (res.status === "fulfilled") {
-            if (res.value.ok) ready.push({ meme: res.value.meme, checked: res.value.checked, model: res.value.model });
-            else next.push({ meme: res.value.meme, note: res.value.reason });
-          } else {
-            const reason = String((res.reason as any)?.message ?? "generation failed").slice(0, 200);
-            next.push({ meme: group[i].meme, note: `the previous attempt failed (${reason})` });
-          }
-        });
+      const vctx: MemeValidationContext = { brandText, allowedPhrases, memory: frozenMemory };
+      const ordered = [...parsed.variations].sort((a, b) => a.variation_id - b.variation_id);
+      // all-or-nothing per meme: a single bad variation fails the meme so the set
+      // stays at exactly 5 and the retry regenerates the whole meme
+      const checked: { variation: MemeVariation; hash: string; tokens: string[] }[] = [];
+      for (let i = 0; i < ordered.length; i++) {
+        const res = validateMemeVariation(ordered[i], meme, i, vctx);
+        if (!res.ok) return { ok: false as const, reason: res.reason, checked: [] as { variation: MemeVariation; hash: string; tokens: string[] }[], model: usedModel ?? null };
+        checked.push({ variation: ordered[i], hash: res.hash, tokens: res.tokens });
       }
+      return { ok: true as const, reason: null as string | null, checked, model: usedModel ?? null };
+    };
 
-      // interleave the round's inserts: variation 1 of every meme, then variation 2…
-      const failedMemes = new Set<string>();
-      for (const entry of shuffleInPlace(ready)) {
-        if (entry.model) model = entry.model;
+    // ponytail: strictly sequential, one meme (5 posts) at a time — each set is
+    // inserted the moment its AI call validates, so the first 5 posts are visible
+    // after ~1 call instead of after all ~25 (reader shuffles per-meme groups anyway,
+    // see visual.service feed shuffle). A failed meme retries alone at the back of
+    // the queue and can never hold up the rest; exhausted memes are skipped.
+    while (queue.length) {
+      const item = queue.shift();
+      if (!item) break;
+      let result: Awaited<ReturnType<typeof runOneMeme>>;
+      try {
+        result = await runOneMeme(item);
+      } catch (e: any) {
+        const reason = String(e?.message ?? "generation failed").slice(0, 200);
+        result = { ok: false as const, reason: `the previous attempt failed (${reason})`, checked: [], model: null };
       }
-      const maxVars = Math.min(1, Math.max(0, ...ready.map((r) => r.checked.length)));
-      for (let vi = 0; vi < maxVars; vi++) {
-        for (const entry of ready) {
-          if (failedMemes.has(entry.meme.id)) continue;
-          const c = entry.checked[vi];
-          if (!c) continue;
-          const inserted = await insertMemeContent({ userId, companyId, jobId, meme: entry.meme, variation: c.variation, hash: c.hash, model });
-          if (!inserted) {
-            failedMemes.add(entry.meme.id);
-            next.push({ meme: entry.meme, note: "an identical overlay is already saved for this brand" });
-            continue;
-          }
+      if (result.ok) {
+        if (result.model) model = result.model;
+        for (const c of result.checked) {
+          const inserted = await insertMemeContent({ userId, companyId, jobId, meme: item.meme, variation: c.variation, hash: c.hash, model });
+          // ponytail: a duplicate means this meme already landed its posts — keep the
+          // partial set and move on WITHOUT requeueing, otherwise the retry's fresh
+          // 5 stack on top and one meme yields up to 10 rows (this run ≤125, always)
+          if (!inserted) break;
           memory.hashes.add(c.hash);
           memory.tokens.push(c.tokens);
           memory.hooks.push(c.variation.overlay_text);
           overlays.push(c.variation.overlay_text.slice(0, 160));
         }
+      } else if (item.attempts + 1 < MAX_ROUNDS) {
+        queue.push({ meme: item.meme, note: result.reason, attempts: item.attempts + 1 });
       }
+      // else: attempts exhausted — skip this meme, the rest still ship
 
       const total = await countGeneratedContent(companyId);
       await touchJob(jobId, { status: "processing", generatedCount: String(total), model, error: null });
-      pending = total >= targetCount ? [] : next;
     }
 
-    const savedCount = await countGeneratedContent(companyId);
+    let savedCount = await countGeneratedContent(companyId);
+    // ponytail: hard cap — overlapping runs (restart mid-run, double trigger) can
+    // leave more than one run's rows; trim oldest excess, keep newest targetCount
+    if (savedCount > targetCount) {
+      await db.execute(sql`delete from ${generatedContents} where ${generatedContents.companyId} = ${companyId} and ${generatedContents.id} not in (select ${generatedContents.id} from ${generatedContents} where ${generatedContents.companyId} = ${companyId} order by ${generatedContents.createdAt} desc, ${generatedContents.id} desc limit ${targetCount})`);
+      savedCount = await countGeneratedContent(companyId);
+    }
     if (savedCount >= targetCount) {
       await touchJob(jobId, {
         status: "completed",

@@ -10,6 +10,11 @@ const envSchema = z.object({
   // ponytail: public R2 bucket base for meme videos — public URL, safe to
   // default. The library/seed store "<base>/<file>.mp4", never secrets.
   R2_PUBLIC_URL: z.url().default("https://pub-0a33eb19f0ef4401971cc16eecd2d8ec.r2.dev"),
+  // ponytail: server-managed AI — single OpenRouter key for all users, no per-user keys
+  OPENROUTER_API_KEY: z.string().min(1).optional(),
+  OPENROUTER_TEXT_MODEL: z.string().default("openai/gpt-4o-mini"),
+  OPENROUTER_IMAGE_MODEL: z.string().default("openai/gpt-image-1"),
+  OPENROUTER_VIDEO_MODEL: z.string().default("google/veo-3-fast"),
   // ponytail: server-side only — the visual discovery feed's Pexels key. Never sent to the
   // client. Read lazily via process.env in pexels.service so read-only paths/tests don't need it.
   PEXELS_API_KEY: z.string().optional(),

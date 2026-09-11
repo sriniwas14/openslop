@@ -10,9 +10,9 @@ import { visualSrc } from '@/services/visual'
 import { FeedEmptyState, FeedErrorState, DailyCompleteState } from '@/components/feed/FeedStates'
 
 // ---------------------------------------------------------------------------
-// Content Feed — single-card deck over the brand's generated content +
-// matched visual assets. Lives inside the normal dashboard layout (sidebar +
-// topbar retained); one focused card at a time.
+// Content Feed — single-card deck over the brand's content + matched visuals.
+// Lives inside the normal dashboard layout (sidebar + topbar retained); one
+// focused card at a time.
 //
 // Deliberately simple: every action swaps the card with a short crossfade —
 // no drag, no fly-off, no rotation.
@@ -22,8 +22,9 @@ import { FeedEmptyState, FeedErrorState, DailyCompleteState } from '@/components
 //     post (save in Library or share — the existing ReviewDialog, rendered
 //     at deck level so it survives the card underneath changing)
 //
-// The deck pointer is the hook's activeIndex, so batched prefetch + visual
-// polling keep working untouched. Only the active card's video autoplays.
+// The deck pointer is the hook's activeIndex, so on-demand prefetch (next 5
+// when the reader reaches the 3rd/4th card from the end) keeps working
+// untouched. Only the active card's video autoplays.
 // ---------------------------------------------------------------------------
 
 export default function ContentFeed() {
@@ -31,7 +32,7 @@ export default function ContentFeed() {
   const {
     items,
     bootstrapping,
-    preparing,
+    appending,
     error,
     hasMore,
     dailyComplete,
@@ -58,18 +59,6 @@ export default function ContentFeed() {
   const activeItem = items.length === 0 ? null : items[clampedIndex]
   const nextItem = items.length === 0 ? null : (items[clampedIndex + 1] ?? null)
   const isLast = items.length > 0 && clampedIndex >= items.length - 1
-
-  // Manual refresh for testing — hidden after use
-  const [manualUsed, setManualUsed] = useState(false)
-  const handleManualRefresh = useCallback(async () => {
-    setManualUsed(true)
-    try {
-      await fetch(`/api/companies/${selectedId}/content-feed/refresh-manual`, { method: 'POST', headers: { 'Content-Type': 'application/json' } })
-      reload()
-    } catch {
-      // ignore
-    }
-  }, [selectedId, reload])
 
   // "Up next" rail inputs — media-only thumbnail of the following post.
   const nextSrc = nextItem ? visualSrc(nextItem.visual) : null
@@ -143,7 +132,7 @@ export default function ContentFeed() {
   // -----------------------------------------------------------------------
   // Empty state
   // -----------------------------------------------------------------------
-  if (!bootstrapping && items.length === 0 && !preparing) {
+  if (!bootstrapping && items.length === 0) {
     return (
       <div>
         <FeedEmptyState onReload={reload} />
@@ -159,28 +148,6 @@ export default function ContentFeed() {
       aria-label="Content deck"
     >
       <div className="flex w-full max-w-xl min-w-0 flex-col items-center gap-3">
-      {/* Deck position */}
-      {items.length > 0 && (
-        <p className="text-xs font-medium text-muted-foreground" aria-live="polite">
-          Card {clampedIndex + 1} of {items.length}
-          {hasMore ? '+' : ''}
-        </p>
-      )}
-
-      {/* Manual refresh button (testing only) */}
-      {!manualUsed && (
-        <div className="mb-3 flex justify-center">
-          <button
-            type="button"
-            onClick={handleManualRefresh}
-            className="rounded-full bg-blue-600 px-4 py-2 text-xs font-medium text-white shadow hover:bg-blue-700 transition-colors"
-            aria-label="Manual refresh for testing"
-          >
-            Manual Refresh (Test)
-          </button>
-        </div>
-      )}
-
       {/* Active card — the only card in the main column; nothing stacks
           behind or overlaps the image. */}
       {activeItem && (
@@ -252,6 +219,16 @@ export default function ContentFeed() {
         </div>
       )}
 
+      {/* Next batch loading — the prefetch fired, posts are on the way */}
+      {appending && (
+        <div className="flex items-center justify-center py-4" aria-live="polite">
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <div className="size-4 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
+            Loading more…
+          </div>
+        </div>
+      )}
+
       {/* Error at end of deck */}
       {error && items.length > 0 && (
         <div className="flex items-center justify-center py-4">
@@ -262,16 +239,6 @@ export default function ContentFeed() {
           >
             <span>Load failed — tap to retry</span>
           </button>
-        </div>
-      )}
-
-      {/* Preparing indicator at end */}
-      {preparing && !dailyComplete && items.length > 0 && (
-        <div className="flex items-center justify-center py-4">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <div className="size-4 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
-            Preparing more visuals…
-          </div>
         </div>
       )}
       </div>

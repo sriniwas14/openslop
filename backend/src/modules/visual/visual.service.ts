@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "../../lib/db";
 import { interleaveRoundRobin } from "../../lib/shuffle";
 import { companies, contentGenerationJobs, generatedContents, visualAssets, visualFeedDaily, visualSearchBatches } from "../../db/schema";
@@ -60,7 +60,6 @@ export type VisualFeedDeps = {
   dailyLimit?: number;
   autoProcess?: boolean; // getContentFeed kicks off background processing (default true)
   now?: () => Date;
-  rand?: () => number; // shuffle source (default Math.random; injectable so tests are deterministic)
 };
 
 // ---------------------------------------------------------------------------
@@ -106,6 +105,9 @@ export function decodeCursor(cursor?: string | null): Cursor | null {
 
 type OffsetCursor = { offset: number; shuffleId: string };
 
+/** Cursor key for the first page (no `cursor` param) — the row that pins the day. */
+const START_CURSOR_KEY = "start";
+
 export function encodeOffsetCursor(offset: number, shuffleId: string): string {
   return Buffer.from(JSON.stringify({ o: offset, s: shuffleId }), "utf8").toString("base64url");
 }
@@ -123,26 +125,23 @@ export function decodeOffsetCursor(cursor?: string | null): OffsetCursor | null 
   }
 }
 
-// ponytail: in-memory snapshot per reload — no migration, no schema change. Snapshots
-// expire after 10 min and the cache is capped; an expired cursor simply mints a fresh
-// shuffle (rare duplicate across a restart beats a 400).
-const SHUFFLE_TTL_MS = 10 * 60 * 1000;
-const SHUFFLE_CACHE_MAX = 200;
-const feedShuffles = new Map<string, { ids: string[]; expiresAt: number }>();
-
-function storeFeedShuffle(ids: string[]): string {
-  const now = Date.now();
-  for (const [k, v] of feedShuffles) {
-    if (v.expiresAt <= now) feedShuffles.delete(k);
+// ponytail: seed-stable shuffle — no snapshot to lose. Page 1 mints a random seed and
+// later pages recompute the IDENTICAL order from the cursor seed (over id-sorted input),
+// so a restart/TTL can never re-deal page 1 as duplicates. No migration, no cache.
+/** Deterministic PRNG (mulberry32) from an opaque seed string. */
+export function prngFromSeed(seed: string): () => number {
+  let h = 1779033703 ^ seed.length;
+  for (let i = 0; i < seed.length; i++) {
+    h = Math.imul(h ^ seed.charCodeAt(i), 3432918353);
+    h = (h << 13) | (h >>> 19);
   }
-  while (feedShuffles.size >= SHUFFLE_CACHE_MAX) {
-    const oldest = feedShuffles.keys().next();
-    if (oldest.done) break;
-    feedShuffles.delete(oldest.value);
-  }
-  const shuffleId = randomUUID();
-  feedShuffles.set(shuffleId, { ids, expiresAt: now + SHUFFLE_TTL_MS });
-  return shuffleId;
+  let t = h >>> 0;
+  return () => {
+    t = (t + 0x6d2b79f5) >>> 0;
+    let x = Math.imul(t ^ (t >>> 15), 1 | t);
+    x = (x + Math.imul(x ^ (x >>> 7), 61 | x)) ^ x;
+    return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
 /** Meme-interleaved ID order: same meme_id never clusters (see lib/shuffle). */
@@ -634,9 +633,10 @@ function emptyFeed(daily: DailyState, dailyLimit: number): ContentFeedResponse {
  * the SAME cursor is a no-op trigger (duplicate-prefetch guard) and simply reflects the
  * latest state, which is how the client polls a batch until its visuals are ready.
  *
- * Ordering: the first page mints a fresh meme-interleaved shuffle (new on every reload);
- * later pages walk that same snapshot via offset cursors, so scrolling never duplicates
- * or skips posts. Legacy {c,i} keyset cursors (in-flight during deploy) use the old path.
+ * Ordering: the first page mints a fresh meme-interleaved shuffle (new on every reload,
+ * keyed by a random seed in the cursor); later pages recompute that same order from the
+ * seed, so scrolling never duplicates or skips posts — even across restarts. Legacy
+ * {c,i} keyset cursors (in-flight during deploy) use the old path.
  */
 export async function getContentFeed(input: GetContentFeedInput): Promise<ContentFeedResponse> {
   const { companyId, userId } = input;
@@ -647,21 +647,31 @@ export async function getContentFeed(input: GetContentFeedInput): Promise<Conten
   const [company] = await db.select().from(companies).where(and(eq(companies.id, companyId), eq(companies.userId, userId)));
   if (!company) throw new VisualFeedError("Company not found", 404);
 
-  // --- 24h daily refresh check: trigger new generation if last refresh > 24h ago ---
+  // --- 24h daily refresh check: bootstrap generation only when the brand has
+  // NO content yet. A feed READ must never wipe existing posts (generation is
+  // wipe-and-regenerate), so a brand that already has content only reads here —
+  // refreshes happen via explicit action. Timestamp updates only when triggering,
+  // so the empty case doesn't spin and the nonempty case costs one cheap count.
   try {
     const [jobRow] = await db.select().from(contentGenerationJobs).where(and(eq(contentGenerationJobs.companyId, companyId), eq(contentGenerationJobs.type, "initial_content_generation")));
     const lastRefresh = jobRow?.lastFeedRefreshAt ? new Date(jobRow.lastFeedRefreshAt) : null;
     const now = new Date();
     if (!lastRefresh || (now.getTime() - lastRefresh.getTime() > 24 * 60 * 60 * 1000)) {
-      // trigger generation in background; don't block feed response
-      void generateMemeBrandContent({ companyId, userId }).catch(() => {});
-      // update lastFeedRefreshAt immediately so concurrent requests don't trigger again
-      // insert new job row if none exists; otherwise update existing
-      const jobExists = !!jobRow;
-      if (jobExists) {
-        await db.update(contentGenerationJobs).set({ lastFeedRefreshAt: now.toISOString() } as any).where(and(eq(contentGenerationJobs.companyId, companyId), eq(contentGenerationJobs.type, "initial_content_generation")));
-      } else {
-        await db.insert(contentGenerationJobs).values({ userId, companyId, type: "initial_content_generation", targetCount: "25", generatedCount: "0", status: "pending", lastFeedRefreshAt: now.toISOString(), createdAt: now.toISOString(), updatedAt: now.toISOString() } as any).onConflictDoNothing();
+      const [countRow] = await db
+        .select({ n: sql<number>`count(*)` })
+        .from(generatedContents)
+        .where(eq(generatedContents.companyId, companyId));
+      if (Number((countRow as any)?.n ?? 0) === 0) {
+        // trigger generation in background; don't block feed response
+        void generateMemeBrandContent({ companyId, userId }).catch(() => {});
+        // update lastFeedRefreshAt immediately so concurrent requests don't trigger again
+        // insert new job row if none exists; otherwise update existing
+        const jobExists = !!jobRow;
+        if (jobExists) {
+          await db.update(contentGenerationJobs).set({ lastFeedRefreshAt: now.toISOString() } as any).where(and(eq(contentGenerationJobs.companyId, companyId), eq(contentGenerationJobs.type, "initial_content_generation")));
+        } else {
+          await db.insert(contentGenerationJobs).values({ userId, companyId, type: "initial_content_generation", targetCount: "25", generatedCount: "0", status: "pending", lastFeedRefreshAt: now.toISOString(), createdAt: now.toISOString(), updatedAt: now.toISOString() } as any).onConflictDoNothing();
+        }
       }
     }
   } catch {
@@ -669,9 +679,16 @@ export async function getContentFeed(input: GetContentFeedInput): Promise<Conten
   }
 
   const date = feedDate(deps.now?.());
-  const rand = deps.rand ?? Math.random;
-  const cursorKey = input.cursor ?? "start";
+  const cursorKey = input.cursor ?? START_CURSOR_KEY;
   const daily = await getDailyState(companyId, date, dailyLimit);
+
+  // Input is id-sorted so the same seed always rebuilds the same order.
+  const loadAllIds = () =>
+    db
+      .select({ id: generatedContents.id, memeId: generatedContents.memeId, contentFormat: generatedContents.contentFormat })
+      .from(generatedContents)
+      .where(and(eq(generatedContents.companyId, companyId), eq(generatedContents.userId, userId)))
+      .orderBy(asc(generatedContents.id)) as Promise<{ id: string; memeId: string | null; contentFormat: string | null }[]>;
 
   // --- idempotent re-read: the same cursorKey always serves its stored page ---
   const stored = await getBatchByCursor(companyId, date, cursorKey);
@@ -683,9 +700,28 @@ export async function getContentFeed(input: GetContentFeedInput): Promise<Conten
       .where(and(eq(generatedContents.companyId, companyId), inArray(generatedContents.id, storedIds)));
     const byId = new Map(rows.map((r) => [r.id, r]));
     const pageRows = storedIds.map((id) => byId.get(id)).filter(Boolean) as any[];
+    let serveStored = pageRows.length > 0;
+    if (serveStored && cursorKey === START_CURSOR_KEY) {
+      // Page 1 pins the whole day — validate it against the live set, or a
+      // snapshot written mid-generation (5 ids, hasMore "0") hides the rest of
+      // the table until tomorrow. Stale rows are dropped so the rebuild below
+      // re-creates a fresh first page.
+      const live = await loadAllIds();
+      const liveSet = new Set(live.map((r) => r.id));
+      const orphaned = storedIds.some((id) => !liveSet.has(id));
+      const grown = (stored as any).hasMore !== "1" && liveSet.size > pageRows.length;
+      if (orphaned || grown) {
+        try {
+          await db.delete(visualSearchBatches).where(eq(visualSearchBatches.id, (stored as any).id));
+        } catch {
+          // best-effort — the rebuild below serves fresh data regardless
+        }
+        serveStored = false;
+      }
+    }
     // A wipe-and-regenerate between pages can orphan stored ids — fall
-    // through to a fresh shuffle rather than serving an empty page.
-    if (pageRows.length) {
+    // through to a seed recompute rather than serving an empty page.
+    if (serveStored) {
       const items = await toFeedItems(pageRows);
       return {
         items,
@@ -703,46 +739,26 @@ export async function getContentFeed(input: GetContentFeedInput): Promise<Conten
     }
   }
 
-  // --- shuffled path: fresh shuffle on first page, snapshot walk after that ---
+  // --- shuffled path: fresh seed on first page, seed-recompute after that ---
   const offsetCur = decodeOffsetCursor(input.cursor);
   if (!input.cursor || offsetCur) {
     let order: string[];
     let offset: number;
     let shuffleId: string;
     if (!input.cursor) {
-      const all = (await db
-        .select({ id: generatedContents.id, memeId: generatedContents.memeId, contentFormat: generatedContents.contentFormat })
-        .from(generatedContents)
-        .where(and(eq(generatedContents.companyId, companyId), eq(generatedContents.userId, userId)))) as {
-        id: string;
-        memeId: string | null;
-        contentFormat: string | null;
-      }[];
+      const all = await loadAllIds();
       if (!all.length) return emptyFeed(daily, dailyLimit);
-      order = buildShuffledFeedOrder(all, rand);
+      shuffleId = randomUUID();
+      order = buildShuffledFeedOrder(all, prngFromSeed(shuffleId));
       offset = 0;
-      shuffleId = storeFeedShuffle(order);
     } else {
-      const snap = feedShuffles.get(offsetCur!.shuffleId);
-      if (snap && snap.expiresAt > Date.now()) {
-        order = snap.ids;
-        offset = Math.min(offsetCur!.offset, order.length);
-        shuffleId = offsetCur!.shuffleId;
-      } else {
-        // snapshot expired (e.g. server restart mid-scroll) — a fresh shuffle beats a 400
-        const all = (await db
-          .select({ id: generatedContents.id, memeId: generatedContents.memeId, contentFormat: generatedContents.contentFormat })
-          .from(generatedContents)
-          .where(and(eq(generatedContents.companyId, companyId), eq(generatedContents.userId, userId)))) as {
-          id: string;
-          memeId: string | null;
-          contentFormat: string | null;
-        }[];
-        if (!all.length) return emptyFeed(daily, dailyLimit);
-        order = buildShuffledFeedOrder(all, rand);
-        offset = 0;
-        shuffleId = storeFeedShuffle(order);
-      }
+      const all = await loadAllIds();
+      if (!all.length) return emptyFeed(daily, dailyLimit);
+      // Rebuild this session's exact order from the cursor seed — never a fresh
+      // shuffle, so page 2+ can't duplicate page 1 after a restart/expiry.
+      shuffleId = offsetCur!.shuffleId;
+      order = buildShuffledFeedOrder(all, prngFromSeed(shuffleId));
+      offset = Math.min(offsetCur!.offset, order.length);
     }
 
     const slice = order.slice(offset, offset + limit);

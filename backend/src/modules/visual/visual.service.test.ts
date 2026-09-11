@@ -121,13 +121,13 @@ describe("content feed shuffle", () => {
     void userId;
   }
 
-  async function walkFeed(userId: string, companyId: string, rand: () => number) {
+  async function walkFeed(userId: string, companyId: string) {
     const seen: string[] = [];
     const memes: (string | null)[] = [];
     let cursor: string | null = null;
     let pages = 0;
     for (;;) {
-      const res = await getContentFeed({ companyId, userId, cursor, deps: { autoProcess: false, rand } });
+      const res = await getContentFeed({ companyId, userId, cursor, deps: { autoProcess: false } });
       pages++;
       for (const item of res.items) {
         seen.push(item.content.id);
@@ -158,12 +158,12 @@ describe("content feed shuffle", () => {
   it("first page mixes memes and a full walk covers every post exactly once", async () => {
     const { userId, companyId } = await seedClusteredBrand(3, 5);
     try {
-      const first = await getContentFeed({ companyId, userId, deps: { autoProcess: false, rand: prng(42) } });
+      const first = await getContentFeed({ companyId, userId, deps: { autoProcess: false } });
       expect(first.items).toHaveLength(5);
       const firstMemes = new Set(first.items.map((i) => (i.content as any).memeId));
       expect(firstMemes.size).toBeGreaterThan(1);
 
-      const walk = await walkFeed(userId, companyId, prng(42));
+      const walk = await walkFeed(userId, companyId);
       expect(walk.pages).toBe(3);
       expect(walk.seen).toHaveLength(15);
       expect(new Set(walk.seen).size).toBe(15);
@@ -177,8 +177,8 @@ describe("content feed shuffle", () => {
   it("every fresh reload shuffles and still covers everything", async () => {
     const { userId, companyId } = await seedClusteredBrand(4, 5);
     try {
-      for (const seed of [11, 22, 33]) {
-        const walk = await walkFeed(userId, companyId, prng(seed));
+      for (let i = 0; i < 3; i++) {
+        const walk = await walkFeed(userId, companyId);
         expect(new Set(walk.seen).size).toBe(20);
         expect(maxRun(walk.memes, (m) => String(m))).toBeLessThan(5);
       }
@@ -190,12 +190,11 @@ describe("content feed shuffle", () => {
   it("re-polling the same cursor returns the same page (idempotent)", async () => {
     const { userId, companyId } = await seedClusteredBrand(2, 5);
     try {
-      const rand = prng(99);
-      const first = await getContentFeed({ companyId, userId, deps: { autoProcess: false, rand } });
+      const first = await getContentFeed({ companyId, userId, deps: { autoProcess: false } });
       expect(first.hasMore).toBe(true);
-      const second = await getContentFeed({ companyId, userId, cursor: first.nextCursor, deps: { autoProcess: false, rand } });
+      const second = await getContentFeed({ companyId, userId, cursor: first.nextCursor, deps: { autoProcess: false } });
       expect(second.items.map((i) => i.content.id)).not.toEqual(first.items.map((i) => i.content.id));
-      const repoll = await getContentFeed({ companyId, userId, cursor: first.nextCursor, deps: { autoProcess: false, rand } });
+      const repoll = await getContentFeed({ companyId, userId, cursor: first.nextCursor, deps: { autoProcess: false } });
       expect(repoll.items.map((i) => i.content.id)).toEqual(second.items.map((i) => i.content.id));
     } finally {
       await cleanupBrand(userId, companyId);

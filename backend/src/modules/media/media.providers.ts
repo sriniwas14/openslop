@@ -240,7 +240,7 @@ async function pollVertex(input: MediaInput, operation: string): Promise<MediaPo
 
 // ponytail: OpenRouter — image is sync (/images), video is async (/videos) — same key, different path
 async function startOpenRouter(input: MediaInput): Promise<MediaPollResult> {
-  if (!input.apiKey) throw new Error("OpenRouter API key is required (store in Settings → AI Providers)");
+  if (!input.apiKey) throw new Error("OpenRouter API key is required (set OPENROUTER_API_KEY in backend/.env)");
   const base = (input.baseUrl || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
   if (input.task === "image") {
     const body: Record<string, unknown> = {
@@ -301,7 +301,7 @@ async function startOpenRouter(input: MediaInput): Promise<MediaPollResult> {
 }
 
 async function pollOpenRouter(input: MediaInput, taskId: string): Promise<MediaPollResult> {
-  if (!input.apiKey) throw new Error("OpenRouter API key is required");
+  if (!input.apiKey) throw new Error("OpenRouter API key is required (set OPENROUTER_API_KEY in backend/.env)");
   const base = (input.baseUrl || "https://openrouter.ai/api/v1").replace(/\/+$/, "");
   if (input.task === "image") throw new Error("OpenRouter image generation completes synchronously — job should not need polling");
   const paths = [`/videos/${encodeURIComponent(taskId)}`, `/videos/generations/${encodeURIComponent(taskId)}`, `/generations/${encodeURIComponent(taskId)}`];

@@ -599,11 +599,24 @@ describe("generateMemeBrandContent interleaved insert order", () => {
     await resetDb();
   });
 
-  it("writes variations round-robin across memes instead of grouped per meme", async () => {
-    const { MEME_LIBRARY } = await import("./meme.library");
-    const userId = "meme-shuffle-user";
-    const company = await seedCompany(userId, "memeshufflebrand");
-    await seedBrand(userId, (company as any).id, 3);
+  it("writes one meme's 5 variations at a time so the first posts show fast", async () => {
+    const { listMemes } = await import("./meme.store");
+    // ponytail: memes live in Neon — seed test rows only when the table is empty
+    let seededIds: string[] = [];
+    try {
+      let lib = await listMemes();
+      if (!lib.length) {
+        seededIds = ["test-meme-a", "test-meme-b", "test-meme-c"];
+        const now = new Date().toISOString();
+        for (const id of seededIds) {
+          await db.insert(schema.memes).values({ id, description: `A test reaction meme for ${id} with funny celebration energy`, url: "https://example.com/test.mp4", createdAt: now, updatedAt: now } as any).onConflictDoNothing();
+        }
+        lib = await listMemes();
+      }
+      const expectedCount = Math.min(lib.length, 25) * 5;
+      const userId = "meme-shuffle-user";
+      const company = await seedCompany(userId, "memeshufflebrand");
+      await seedBrand(userId, (company as any).id, 3);
 
     const HOOKS = [
       "POV the handover board updated itself before standup",
@@ -627,17 +640,18 @@ describe("generateMemeBrandContent interleaved insert order", () => {
     });
 
     const res = await generateMemeBrandContent({ companyId: (company as any).id, userId, generateFn: gen as any, concurrency: 2 });
-    expect(res.status).toBe("completed");
-    expect(res.generatedCount).toBe(MEME_LIBRARY.length * 5);
+      expect(res.status).toBe("completed");
+      expect(res.generatedCount).toBe(expectedCount);
 
-    // insertion order = createdAt order (sequential awaited inserts); the old code
-    // wrote 5 same-meme rows back-to-back and every createdAt-ordered view clusters.
+    // insertion order = createdAt order (sequential awaited inserts); each meme's
+    // 5 variations land together so the first posts are visible after ~1 AI call.
+    // The feed reader shuffles per-meme groups (visual.service feed shuffle).
     const rows = (await db
       .select({ memeId: schema.generatedContents.memeId })
       .from(schema.generatedContents)
       .where(eq(schema.generatedContents.companyId, (company as any).id))
       .orderBy(schema.generatedContents.createdAt)) as { memeId: string }[];
-    expect(rows).toHaveLength(MEME_LIBRARY.length * 5);
+    expect(rows).toHaveLength(expectedCount);
     let best = 0;
     let cur = 0;
     let prev: string | null = null;
@@ -646,6 +660,11 @@ describe("generateMemeBrandContent interleaved insert order", () => {
       prev = row.memeId;
       best = Math.max(best, cur);
     }
-    expect(best).toBe(1);
+    expect(best).toBeLessThanOrEqual(5);
+    } finally {
+      for (const id of seededIds) {
+        try { await db.delete(schema.memes).where(eq(schema.memes.id, id)); } catch {}
+      }
+    }
   });
 });

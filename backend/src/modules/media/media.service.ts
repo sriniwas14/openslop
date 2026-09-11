@@ -1,6 +1,7 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
 import { db } from "../../lib/db";
 import { aiConfigs, aiPreferences, contents, mediaJobs } from "../../db/schema";
+import { env } from "../../env";
 import { pollMedia, startMedia, type MediaInput, type MediaStatus, type MediaTask } from "./media.providers";
 
 type MediaFormat = "vertical" | "horizontal" | null | undefined;
@@ -13,7 +14,56 @@ function taskModel(preferences: any, task: MediaTask) {
   return task === "image" ? preferences?.imageModel : preferences?.videoModel;
 }
 
+// ponytail: server-managed media — sentinel config backed by OPENROUTER_API_KEY,
+// used when the user has no per-user ai_config (the normal case now)
+export const ENV_MEDIA_CONFIG_ID = "env-openrouter";
+
+function envMediaConfig(task: MediaTask) {
+  const apiKey = (env.OPENROUTER_API_KEY ?? "").trim();
+  if (!apiKey) throw new Error("OPENROUTER_API_KEY is missing — set it in backend/.env (see .env.example)");
+  return {
+    id: ENV_MEDIA_CONFIG_ID,
+    userId: "",
+    provider: "openrouter",
+    apiKey,
+    accessKey: null,
+    secretKey: null,
+    serviceAccountJson: null,
+    baseUrl: "https://openrouter.ai/api/v1",
+    projectId: null,
+    location: null,
+    model: null,
+    configId: null,
+    name: "Server OpenRouter",
+    isDefault: "1",
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+function envMediaModel(task: MediaTask) {
+  return task === "image" ? env.OPENROUTER_IMAGE_MODEL : env.OPENROUTER_VIDEO_MODEL;
+}
+
 export async function getMediaConfig(userId: string, task: MediaTask, configId?: string | null) {
+  if (!configId) {
+    let preferences: any = null;
+    try {
+      [preferences] = await db.select().from(aiPreferences).where(eq(aiPreferences.userId, userId));
+    } catch {
+      // ponytail: table missing before migration → server key
+      return { config: envMediaConfig(task), model: envMediaModel(task) };
+    }
+    const selectedId = taskConfigId(preferences, task);
+    const model = taskModel(preferences, task);
+    // ponytail: no per-user routing → server key (normal case after key removal)
+    if (!selectedId && !model) return { config: envMediaConfig(task), model: envMediaModel(task) };
+    if (!selectedId || !model) throw new Error(`Configure ${task} provider + model in Settings → AI Providers (both required)`);
+    const [config] = await db.select().from(aiConfigs).where(and(eq(aiConfigs.id, selectedId), eq(aiConfigs.userId, userId)));
+    if (!config) throw new Error(`${task} AI provider configuration was not found`);
+    return { config, model: String(model) };
+  }
+  if (configId === ENV_MEDIA_CONFIG_ID) return { config: envMediaConfig(task), model: envMediaModel(task) };
   const [preferences] = await db.select().from(aiPreferences).where(eq(aiPreferences.userId, userId));
   const selectedId = configId ?? taskConfigId(preferences, task);
   const model = taskModel(preferences, task);
@@ -45,6 +95,7 @@ function inputForJob(job: any, config: any): MediaInput {
 }
 
 async function loadJobConfig(job: any) {
+  if (job.configId === ENV_MEDIA_CONFIG_ID) return envMediaConfig(job.task);
   const [config] = await db.select().from(aiConfigs).where(and(eq(aiConfigs.id, job.configId), eq(aiConfigs.userId, job.userId)));
   if (!config) throw new Error("AI provider configuration was deleted");
   return config;

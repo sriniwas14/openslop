@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { Navigate, Outlet, useNavigate } from 'react-router-dom'
 import { useSession } from '@/services/auth'
 import { listCompanies } from '@/services/companies'
-import { listAiConfigs } from '@/services/ai'
 import { CompanyProvider } from '@/context/CompanyContext'
 import { BrandAnalysisProvider } from '@/context/BrandAnalysisContext'
 import Sidebar from '@/components/layout/Sidebar'
@@ -18,12 +17,11 @@ export default function DashboardLayout() {
     if (isPending) return
     if (!session) { setChecking(false); return }
     let cancelled = false
-    // ponytail: two fetches in parallel, no new endpoint; skip check when already on onboarding
-    Promise.all([listAiConfigs().catch(() => [] as any[]), listCompanies().catch(() => [] as any[])]).then(([ai, companies]) => {
+    // ponytail: company-only gate — AI keys are server-managed (OPENROUTER_API_KEY)
+    Promise.all([listCompanies().catch(() => [] as any[])]).then(([companies]) => {
       if (cancelled) return
-      const needAi = !ai || ai.length === 0
       const needCompany = !companies || companies.length === 0
-      if (needAi || needCompany) navigate('/onboarding', { replace: true })
+      if (needCompany) navigate('/onboarding', { replace: true })
       else setChecking(false)
     })
     return () => { cancelled = true }
