@@ -49,7 +49,7 @@ import {
 // rows with visualAssetId IS NULL. brandId === companyId in this codebase.
 // ---------------------------------------------------------------------------
 
-export const DEFAULT_TARGET_COUNT = 20;
+export const DEFAULT_TARGET_COUNT = 25;
 export const JOB_TYPE_INITIAL = "initial_content_generation";
 
 const BATCH_SIZE = 5; // pieces per AI call
@@ -782,8 +782,8 @@ export async function generateMemeBrandContent(opts: GenerateMemeOptions): Promi
   const { companyId, userId } = opts;
   const generateFn = opts.generateFn ?? aiMemeBatchGenerator;
   const concurrency = Math.max(1, opts.concurrency ?? CONCURRENCY);
-  const library = await listMemes();
-  const targetCount = library.length * MEME_VARIATIONS_PER_MEME;
+  const library = (await listMemes()).slice(0, 25);
+  const targetCount = library.length;
 
   const [company] = await db.select().from(companies).where(and(eq(companies.id, companyId), eq(companies.userId, userId)));
   if (!company) throw new UgcError("Company not found", 404);
@@ -880,7 +880,7 @@ export async function generateMemeBrandContent(opts: GenerateMemeOptions): Promi
       for (const entry of shuffleInPlace(ready)) {
         if (entry.model) model = entry.model;
       }
-      const maxVars = Math.max(0, ...ready.map((r) => r.checked.length));
+      const maxVars = Math.min(1, Math.max(0, ...ready.map((r) => r.checked.length)));
       for (let vi = 0; vi < maxVars; vi++) {
         for (const entry of ready) {
           if (failedMemes.has(entry.meme.id)) continue;

@@ -2,14 +2,16 @@ import type { FastifyInstance } from "fastify";
 import { and, eq } from "drizzle-orm";
 import type { ZodTypeProvider } from "fastify-type-provider-zod";
 import { db } from "../../lib/db";
-import { companies } from "../../db/schema";
+import { companies, contentGenerationJobs } from "../../db/schema";
 import { requireSession } from "../../plugins/auth";
 import {
   companyIdParamsSchema,
   contentFeedQuerySchema,
   contentFeedResponseSchema,
+  manualRefreshResponseSchema,
   errorResponseSchema,
 } from "./visual.schemas";
+import { generateMemeBrandContent } from "../ugc/ugc.service";
 import { VisualFeedError, getContentFeed } from "./visual.service";
 
 // ---------------------------------------------------------------------------
@@ -40,6 +42,43 @@ export async function visualRoutes(app: FastifyInstance) {
   // reflects the latest state — that is how the client polls a batch until ready
   // and prefetches the next one (around item 3) without blocking the scroll.
   // -------------------------------------------------------------------------
+  // -------------------------------------------------------------------------
+  // POST manual refresh (testing only) — forces generation regardless of 24h
+  // -------------------------------------------------------------------------
+  r.post(
+    `${base}/refresh-manual`,
+    {
+      preHandler: requireSession,
+      schema: {
+        params: companyIdParamsSchema,
+        response: { 202: manualRefreshResponseSchema, 404: errorResponseSchema },
+      },
+    },
+    async (request, reply) => {
+      const company = await assertCompany(request, request.params.companyId);
+      if (!company) return reply.status(404).send({ error: "Company not found" });
+      const userId = request.session!.user.id;
+      const companyId = company.id;
+      // trigger generation manually (testing button)
+      void generateMemeBrandContent({ companyId, userId }).catch((e: any) => {
+        request.log.warn({ err: e }, "manual refresh generation failed");
+      });
+      // hide/remove button after use by updating job
+      try {
+        const now = new Date().toISOString();
+        const [jobRow] = await db.select().from(contentGenerationJobs).where(and(eq(contentGenerationJobs.companyId, companyId), eq(contentGenerationJobs.type, "initial_content_generation")));
+        if (jobRow) {
+          await db.update(contentGenerationJobs).set({ lastFeedRefreshAt: now, updatedAt: now } as any).where(and(eq(contentGenerationJobs.companyId, companyId), eq(contentGenerationJobs.type, "initial_content_generation")));
+        } else {
+          await db.insert(contentGenerationJobs).values({ userId, companyId, type: "initial_content_generation", targetCount: "25", generatedCount: "0", status: "pending", lastFeedRefreshAt: now, createdAt: now, updatedAt: now } as any).onConflictDoNothing();
+        }
+      } catch {
+        // ignore tracking errors on manual refresh
+      }
+      return reply.status(202).send({ status: "pending", companyId });
+    },
+  );
+
   r.get(
     base,
     {

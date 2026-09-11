@@ -309,6 +309,7 @@ export const contentGenerationJobs = pgTable(
     promptVersion: text("prompt_version"),
     startedAt: text("started_at"),
     completedAt: text("completed_at"),
+    lastFeedRefreshAt: text("last_feed_refresh_at"),
     createdAt: text("created_at")
       .notNull()
       .$defaultFn(() => new Date().toISOString()),

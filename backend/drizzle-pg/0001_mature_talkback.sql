@@ -1,0 +1,1 @@
+ALTER TABLE "content_generation_job" ADD COLUMN "last_feed_refresh_at" text;

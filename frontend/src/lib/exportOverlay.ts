@@ -363,7 +363,19 @@ export async function exportVideoWithOverlay(
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('no 2d context')
 
-  const stream = (canvas as HTMLCanvasElement & { captureStream: (fps: number) => MediaStream }).captureStream(30)
+  const videoStream = (canvas as HTMLCanvasElement & { captureStream: (fps: number) => MediaStream }).captureStream(30)
+  // Keep the source video audio that already exists in the media URL.
+  const audioTracks: MediaStreamTrack[] = []
+  try {
+    v.muted = false
+    const sourceAudioStream = (v as HTMLVideoElement & { captureStream?: (fps?: number) => MediaStream }).captureStream ? v.captureStream(30) : null
+    if (sourceAudioStream) {
+      for (const track of sourceAudioStream.getAudioTracks()) audioTracks.push(track)
+    }
+  } catch {
+    // Audio capture unsupported for this source; continue without.
+  }
+  const stream = new MediaStream([...videoStream.getTracks(), ...audioTracks])
   const mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find((m) => {
     try {
       return MediaRecorder.isTypeSupported(m)
@@ -531,7 +543,19 @@ export async function exportImageWithAnimatedMeme(
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new Error('no 2d context')
 
-  const stream = (canvas as HTMLCanvasElement & { captureStream: (fps: number) => MediaStream }).captureStream(30)
+  const videoStream = (canvas as HTMLCanvasElement & { captureStream: (fps: number) => MediaStream }).captureStream(30)
+  // Keep the source meme video audio that already exists in the media URL.
+  const audioTracks: MediaStreamTrack[] = []
+  try {
+    meme.muted = false
+    const sourceAudioStream = (meme as HTMLVideoElement & { captureStream?: (fps?: number) => MediaStream }).captureStream ? meme.captureStream(30) : null
+    if (sourceAudioStream) {
+      for (const track of sourceAudioStream.getAudioTracks()) audioTracks.push(track)
+    }
+  } catch {
+    // Audio capture unsupported for this source; continue without.
+  }
+  const stream = new MediaStream([...videoStream.getTracks(), ...audioTracks])
   const mime = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find((m) => {
     try {
       return MediaRecorder.isTypeSupported(m)

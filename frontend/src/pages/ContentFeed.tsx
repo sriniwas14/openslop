@@ -59,6 +59,18 @@ export default function ContentFeed() {
   const nextItem = items.length === 0 ? null : (items[clampedIndex + 1] ?? null)
   const isLast = items.length > 0 && clampedIndex >= items.length - 1
 
+  // Manual refresh for testing — hidden after use
+  const [manualUsed, setManualUsed] = useState(false)
+  const handleManualRefresh = useCallback(async () => {
+    setManualUsed(true)
+    try {
+      await fetch(`/api/companies/${selectedId}/content-feed/refresh-manual`, { method: 'POST', headers: { 'Content-Type': 'application/json' } })
+      reload()
+    } catch {
+      // ignore
+    }
+  }, [selectedId, reload])
+
   // "Up next" rail inputs — media-only thumbnail of the following post.
   const nextSrc = nextItem ? visualSrc(nextItem.visual) : null
   const nextMediaType = nextItem
@@ -153,6 +165,20 @@ export default function ContentFeed() {
           Card {clampedIndex + 1} of {items.length}
           {hasMore ? '+' : ''}
         </p>
+      )}
+
+      {/* Manual refresh button (testing only) */}
+      {!manualUsed && (
+        <div className="mb-3 flex justify-center">
+          <button
+            type="button"
+            onClick={handleManualRefresh}
+            className="rounded-full bg-blue-600 px-4 py-2 text-xs font-medium text-white shadow hover:bg-blue-700 transition-colors"
+            aria-label="Manual refresh for testing"
+          >
+            Manual Refresh (Test)
+          </button>
+        </div>
       )}
 
       {/* Active card — the only card in the main column; nothing stacks

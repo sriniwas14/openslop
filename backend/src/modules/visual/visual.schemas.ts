@@ -68,6 +68,12 @@ export const feedBatchSchema = z.object({
   status: z.enum(VISUAL_BATCH_STATUSES),
 });
 
+export const manualRefreshResponseSchema = z.object({
+  status: z.string(),
+  companyId: z.string(),
+});
+export type ManualRefreshResponse = z.infer<typeof manualRefreshResponseSchema>;
+
 export const contentFeedResponseSchema = z.object({
   items: z.array(feedItemSchema),
   nextCursor: z.string().nullable(),

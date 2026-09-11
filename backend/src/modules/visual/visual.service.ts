@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import { db } from "../../lib/db";
 import { interleaveRoundRobin } from "../../lib/shuffle";
-import { companies, generatedContents, visualAssets, visualFeedDaily, visualSearchBatches } from "../../db/schema";
+import { companies, contentGenerationJobs, generatedContents, visualAssets, visualFeedDaily, visualSearchBatches } from "../../db/schema";
 import { parseGeneratedContentRow, type GeneratedContentDoc } from "../ugc/ugc.schemas";
 import { buildVisualQueries, refineVisualQueries, type VisualQueryMeta } from "./visual.queries";
 import {
@@ -13,6 +13,7 @@ import {
   type ScoredCandidate,
 } from "./visual.scorer";
 import { PexelsError, searchPexelsPhotos, searchPexelsVideos, type VisualCandidate } from "./pexels.service";
+import { generateMemeBrandContent } from "../ugc/ugc.service";
 import {
   FEED_BATCH_SIZE,
   FEED_DAILY_LIMIT,
@@ -645,6 +646,27 @@ export async function getContentFeed(input: GetContentFeedInput): Promise<Conten
 
   const [company] = await db.select().from(companies).where(and(eq(companies.id, companyId), eq(companies.userId, userId)));
   if (!company) throw new VisualFeedError("Company not found", 404);
+
+  // --- 24h daily refresh check: trigger new generation if last refresh > 24h ago ---
+  try {
+    const [jobRow] = await db.select().from(contentGenerationJobs).where(and(eq(contentGenerationJobs.companyId, companyId), eq(contentGenerationJobs.type, "initial_content_generation")));
+    const lastRefresh = jobRow?.lastFeedRefreshAt ? new Date(jobRow.lastFeedRefreshAt) : null;
+    const now = new Date();
+    if (!lastRefresh || (now.getTime() - lastRefresh.getTime() > 24 * 60 * 60 * 1000)) {
+      // trigger generation in background; don't block feed response
+      void generateMemeBrandContent({ companyId, userId }).catch(() => {});
+      // update lastFeedRefreshAt immediately so concurrent requests don't trigger again
+      // insert new job row if none exists; otherwise update existing
+      const jobExists = !!jobRow;
+      if (jobExists) {
+        await db.update(contentGenerationJobs).set({ lastFeedRefreshAt: now.toISOString() } as any).where(and(eq(contentGenerationJobs.companyId, companyId), eq(contentGenerationJobs.type, "initial_content_generation")));
+      } else {
+        await db.insert(contentGenerationJobs).values({ userId, companyId, type: "initial_content_generation", targetCount: "25", generatedCount: "0", status: "pending", lastFeedRefreshAt: now.toISOString(), createdAt: now.toISOString(), updatedAt: now.toISOString() } as any).onConflictDoNothing();
+      }
+    }
+  } catch {
+    // refresh check failure should never break the feed
+  }
 
   const date = feedDate(deps.now?.());
   const rand = deps.rand ?? Math.random;
